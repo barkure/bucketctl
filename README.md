@@ -2,8 +2,6 @@
 
 Small interactive S3 client with an SFTP-like workflow.
 
-One profile maps to one bucket.
-
 ## Config
 
 Config path:
@@ -37,27 +35,6 @@ Directly attach a profile:
 
 ```bash
 cargo run -- mybucket
-```
-
-## Flow
-
-```text
-bucketctl > ls
-mybucket
-
-bucketctl > attach mybucket
-mybucket:/ >
-```
-
-Inside the bucket:
-
-```text
-mybucket:/ > ls
-mybucket:/ > cd some/path
-mybucket:/ > put ./local.txt
-mybucket:/ > get remote.bin
-mybucket:/ > rm remote.bin
-mybucket:/ > rm -r some/prefix
 ```
 
 ## Commands
