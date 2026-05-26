@@ -20,6 +20,11 @@ fn main() -> Result<()> {
     let profiles = config.profiles.clone().into_iter().collect();
     let args = cli.args;
 
+    if args.len() == 1 && matches!(args[0].as_str(), "-v" | "--version") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let runtime = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
