@@ -77,3 +77,20 @@ bucketctl <mybucket>
 - `!<local command>`
 - `Ctrl-C` 取消当前传输
 - `Ctrl-D` 退出 shell
+
+### Alias (optional)
+
+把下面这行追加到你的 shell 配置文件：
+
+```bash
+# For bash (~/.bashrc)
+echo "alias bkt='bucketctl'" >> ~/.bashrc
+
+# For zsh (~/.zshrc)
+echo "alias bkt='bucketctl'" >> ~/.zshrc
+
+# For fish (~/.config/fish/config.fish)
+echo "alias bkt='bucketctl'" >> ~/.config/fish/config.fish
+```
+
+重载 shell 后，就可以用 `bkt` 命令代替 `bucketctl`。

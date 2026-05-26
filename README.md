@@ -76,3 +76,20 @@ Available commands:
 - `!<local command>`
 - `Ctrl-C` cancels the current transfer
 - `Ctrl-D` exits the shell
+
+### Alias (optional)
+
+Add to your shell config file:
+
+```bash
+# For bash (~/.bashrc)
+echo "alias bkt='bucketctl'" >> ~/.bashrc
+
+# For zsh (~/.zshrc)
+echo "alias bkt='bucketctl'" >> ~/.zshrc
+
+# For fish (~/.config/fish/config.fish)
+echo "alias bkt='bucketctl'" >> ~/.config/fish/config.fish
+```
+
+Reload your shell, then use the `bkt` command instead of `bucketctl`.
