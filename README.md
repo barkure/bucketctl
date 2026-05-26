@@ -25,22 +25,23 @@ secret_key = "env:SECRET_KEY"
 path_style = false
 ```
 
-## Run
+## Installation
+
+Install the latest matching release:
 
 ```bash
-cargo run --
+bash -c "$(curl -fsSL https://github.com/barkure/bucketctl/raw/main/install.sh)" @ install
 ```
 
-Directly attach a profile:
+Remove it:
 
 ```bash
-cargo run -- mybucket
+bash -c "$(curl -fsSL https://github.com/barkure/bucketctl/raw/main/install.sh)" @ remove
 ```
 
 ## Commands
 
-At `bucketctl >`:
-
+Root:
 - `ls`
 - `attach <profile>`
 - `help`
@@ -48,8 +49,7 @@ At `bucketctl >`:
 - `!<local command>`
 - `Ctrl-D`
 
-At `mybucket:/ >`:
-
+Inside a bucket:
 - `ls [path]`
 - `cd [path]`
 - `pwd`
@@ -62,4 +62,4 @@ At `mybucket:/ >`:
 - `exit`
 - `!<local command>`
 - `Ctrl-C` cancels the current transfer
-- `Ctrl-D` detaches back to `bucketctl >`
+- `Ctrl-D` detaches back to root
