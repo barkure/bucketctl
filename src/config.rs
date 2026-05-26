@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, env, fs};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
@@ -20,8 +24,12 @@ pub struct ProfileConfig {
 }
 
 impl AppConfig {
-    pub fn load() -> Result<Self> {
-        let path = default_config_path().ok_or_else(|| anyhow!("could not determine config path"))?;
+    pub fn load(override_path: Option<&Path>) -> Result<Self> {
+        let path = match override_path {
+            Some(path) => path.to_path_buf(),
+            None => default_config_path()
+                .ok_or_else(|| anyhow!("could not determine config path"))?,
+        };
         let raw = fs::read_to_string(&path)
             .with_context(|| format!("failed to read config file {}", path.display()))?;
         let profiles: BTreeMap<String, ProfileConfig> = toml::from_str(&raw)
@@ -46,13 +54,10 @@ impl ProfileConfig {
     }
 }
 
-fn default_config_path() -> Option<std::path::PathBuf> {
-    env::var_os("HOME").map(|home| {
-        std::path::PathBuf::from(home)
-            .join(".config")
-            .join("bucketctl")
-            .join("config.toml")
-    })
+fn default_config_path() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".config").join("bucketctl").join("config.toml"))
 }
 
 fn resolve_secret(value: &str, field: &str) -> Result<String> {
