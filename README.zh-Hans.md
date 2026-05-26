@@ -4,6 +4,8 @@
 
 一个简单的 S3 命令行工具，使用方式接近 SFTP。
 
+<img src="assets/demo.gif" alt="演示" width="500" />
+
 ## 配置
 
 配置文件路径：

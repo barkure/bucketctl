@@ -4,6 +4,8 @@
 
 A simple S3 command-line tool with an SFTP-like workflow.
 
+<img src="assets/demo.gif" alt="Demo" width="500" />
+
 ## Config
 
 Config path:
