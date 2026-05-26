@@ -1,6 +1,6 @@
 [package]
 name = "bucketctl"
-version = "26.5.26"
+version = "26.5.27"
 edition = "2024"
 
 
