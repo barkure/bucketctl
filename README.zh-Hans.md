@@ -80,7 +80,7 @@ bucketctl <mybucket>
 - `Ctrl-C` 取消当前传输
 - `Ctrl-D` 退出 shell
 
-### Alias (optional)
+### Alias (可选)
 
 把下面这行追加到你的 shell 配置文件：
 
