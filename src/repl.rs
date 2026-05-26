@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     env, fs, io,
     path::{Path, PathBuf},
     process::Command,
@@ -21,6 +22,7 @@ use tokio::runtime::Runtime;
 use crate::{
     s3::S3Backend,
     session::{Session, resolve_remote_path},
+    ui,
 };
 
 pub fn run_repl(runtime: Arc<Runtime>, session: Arc<Mutex<Session>>) -> Result<()> {
@@ -38,6 +40,9 @@ pub fn run_repl(runtime: Arc<Runtime>, session: Arc<Mutex<Session>>) -> Result<(
                 .map_err(|_| anyhow!("session lock poisoned"))?;
             guard.prompt()
         };
+        if let Some(helper) = editor.helper_mut() {
+            helper.colored_prompt = ui::colorize_prompt(&prompt).into_owned();
+        }
 
         match editor.readline(&prompt) {
             Ok(line) => {
@@ -104,19 +109,34 @@ fn run_command(
             for entry in runtime.block_on(s3.list_prefix(&bucket, &prefix))? {
                 if entry.is_dir {
                     if let Some(modified) = entry.modified.as_deref() {
-                        println!("{:>10}  {modified}  {}/", "-", entry.name);
+                        println!(
+                            "{}  {}  {}",
+                            ui::stdout_dir_label("DIR"),
+                            ui::stdout_time(modified),
+                            ui::stdout_dir(&format!("{}/", entry.name))
+                        );
                     } else {
-                        println!("{:>10}  {:19}  {}/", "-", "", entry.name);
+                        println!(
+                            "{}  {}  {}",
+                            ui::stdout_dir_label("DIR"),
+                            ui::stdout_time(""),
+                            ui::stdout_dir(&format!("{}/", entry.name))
+                        );
                     }
                 } else if let Some(size) = entry.size {
-                    let size = human_bytes(size.max(0) as u64);
+                    let size = ui::stdout_size(&ui::format_bytes(size.max(0) as u64));
                     if let Some(modified) = entry.modified.as_deref() {
-                        println!("{size:>10}  {modified}  {}", entry.name);
+                        println!(
+                            "{}  {}  {}",
+                            size,
+                            ui::stdout_time(modified),
+                            ui::stdout_file(&entry.name)
+                        );
                     } else {
-                        println!("{size:>10}  {}", entry.name);
+                        println!("{}  {}", size, ui::stdout_file(&entry.name));
                     }
                 } else {
-                    println!("{}", entry.name);
+                    println!("{}", ui::stdout_file(&entry.name));
                 }
             }
             Ok(false)
@@ -248,25 +268,45 @@ pub fn run_noninteractive_command_line(
                 for entry in runtime.block_on(s3.list_prefix(&bucket, &prefix))? {
                     if entry.is_dir {
                         if let Some(modified) = entry.modified.as_deref() {
-                            println!("{:>10}  {modified}  {}/", "-", entry.name);
+                            println!(
+                                "{}  {}  {}",
+                                ui::stdout_dir_label("DIR"),
+                                ui::stdout_time(modified),
+                                ui::stdout_dir(&format!("{}/", entry.name))
+                            );
                         } else {
-                            println!("{:>10}  {:19}  {}/", "-", "", entry.name);
+                            println!(
+                                "{}  {}  {}",
+                                ui::stdout_dir_label("DIR"),
+                                ui::stdout_time(""),
+                                ui::stdout_dir(&format!("{}/", entry.name))
+                            );
                         }
                     } else if let Some(size) = entry.size {
-                        let size = human_bytes(size.max(0) as u64);
+                        let size = ui::stdout_size(&ui::format_bytes(size.max(0) as u64));
                         if let Some(modified) = entry.modified.as_deref() {
-                            println!("{size:>10}  {modified}  {}", entry.name);
+                            println!(
+                                "{}  {}  {}",
+                                size,
+                                ui::stdout_time(modified),
+                                ui::stdout_file(&entry.name)
+                            );
                         } else {
-                            println!("{size:>10}  {}", entry.name);
+                            println!("{}  {}", size, ui::stdout_file(&entry.name));
                         }
                     } else {
-                        println!("{}", entry.name);
+                        println!("{}", ui::stdout_file(&entry.name));
                     }
                 }
             } else {
                 let profiles = with_session(session, |sess| sess.list_profiles())?;
-                for profile in profiles {
-                    println!("{profile}");
+                if !profiles.is_empty() {
+                    let rendered = profiles
+                        .into_iter()
+                        .map(|profile| ui::stdout_profile(&profile))
+                        .collect::<Vec<_>>()
+                        .join("  ");
+                    println!("{rendered}");
                 }
             }
             Ok(false)
@@ -496,11 +536,16 @@ fn with_session_mut<T>(
 struct ReplHelper {
     runtime: Arc<Runtime>,
     session: Arc<Mutex<Session>>,
+    colored_prompt: String,
 }
 
 impl ReplHelper {
     fn new(runtime: Arc<Runtime>, session: Arc<Mutex<Session>>) -> Self {
-        Self { runtime, session }
+        Self {
+            runtime,
+            session,
+            colored_prompt: String::new(),
+        }
     }
 }
 
@@ -510,7 +555,19 @@ impl Hinter for ReplHelper {
     type Hint = String;
 }
 
-impl Highlighter for ReplHelper {}
+impl Highlighter for ReplHelper {
+    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
+        &'s self,
+        prompt: &'p str,
+        default: bool,
+    ) -> Cow<'b, str> {
+        if default {
+            Cow::Borrowed(&self.colored_prompt)
+        } else {
+            Cow::Borrowed(prompt)
+        }
+    }
+}
 
 impl Validator for ReplHelper {}
 
@@ -695,20 +752,4 @@ fn split_remote_completion(current: &str) -> (String, String, String) {
 
 fn to_readline_error(err: anyhow::Error) -> ReadlineError {
     ReadlineError::Io(io::Error::other(err.to_string()))
-}
-
-fn human_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-
-    if unit == 0 {
-        format!("{bytes} {}", UNITS[unit])
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
 }

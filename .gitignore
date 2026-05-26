@@ -1,3 +1,5 @@
 /target
 **/*.part
+**/*.download
+.download
 .DS_Store

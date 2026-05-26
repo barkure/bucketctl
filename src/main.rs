@@ -3,6 +3,7 @@ mod config;
 mod repl;
 mod s3;
 mod session;
+mod ui;
 
 use std::sync::{Arc, Mutex};
 

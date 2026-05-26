@@ -35,10 +35,10 @@ impl Session {
                 } else {
                     format!("/{}", self.cwd)
                 };
-                format!("{profile}:{path} > ")
+                format!("{profile}:{path}> ")
             }
-            (Some(profile), None) => format!("{profile} > "),
-            (None, _) => "bucketctl > ".to_owned(),
+            (Some(profile), None) => format!("{profile}> "),
+            (None, _) => "bucketctl> ".to_owned(),
         }
     }
 
@@ -103,13 +103,18 @@ impl Session {
     }
 
     pub fn resolve_download_target(remote: &str, local: Option<&str>) -> Result<PathBuf> {
-        if let Some(local) = local {
-            return Ok(PathBuf::from(local));
-        }
         let file_name = Path::new(remote)
             .file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(|| anyhow!("remote path must point to an object"))?;
+
+        if let Some(local) = local {
+            let local_path = PathBuf::from(local);
+            if local_path.is_dir() {
+                return Ok(local_path.join(file_name));
+            }
+            return Ok(local_path);
+        }
         Ok(PathBuf::from(file_name))
     }
 

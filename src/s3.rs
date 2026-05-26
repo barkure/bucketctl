@@ -1,11 +1,7 @@
 use std::{
-    io::{self, ErrorKind, Write},
+    io::{self, ErrorKind},
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -21,6 +17,7 @@ use chrono::{DateTime, Local, Utc};
 use futures_util::TryStreamExt;
 use http_body::Frame;
 use http_body_util::StreamBody;
+use indicatif::{ProgressBar, ProgressStyle};
 use tokio::{
     fs::{File, OpenOptions},
     io::AsyncWriteExt,
@@ -28,7 +25,7 @@ use tokio::{
 };
 use tokio_util::io::ReaderStream;
 
-use crate::config::ProfileConfig;
+use crate::{config::ProfileConfig, ui};
 
 #[derive(Clone)]
 pub struct S3Backend {
@@ -109,7 +106,12 @@ impl S3Backend {
             }
         }
 
-        entries.sort_by(|left, right| left.name.cmp(&right.name));
+        entries.sort_by(|left, right| {
+            right
+                .is_dir
+                .cmp(&left.is_dir)
+                .then_with(|| left.name.cmp(&right.name))
+        });
         Ok(entries)
     }
 
@@ -121,16 +123,12 @@ impl S3Backend {
         let file = File::open(local_path)
             .await
             .with_context(|| format!("failed to read {}", local_path.display()))?;
-        let progress = Arc::new(UploadProgress::new(total_bytes));
+        eprintln!("{} {} -> {key}", ui::status_uploading(), local_path.display());
+        let progress = transfer_progress_bar(total_bytes)?;
         let progress_for_stream = progress.clone();
-        let local_display = local_path.display().to_string();
-        let key_display = key.to_owned();
-
-        print_upload_progress(key, local_path, 0, total_bytes)?;
 
         let stream = ReaderStream::with_capacity(file, 256 * 1024).inspect_ok(move |chunk| {
-            progress_for_stream.advance(chunk.len() as u64);
-            let _ = progress_for_stream.maybe_print(&key_display, &local_display);
+            progress_for_stream.inc(chunk.len() as u64);
         });
         let body = StreamBody::new(stream.map_ok(Frame::data));
         let body = ByteStream::from(SdkBody::from_body_1_x(body));
@@ -147,10 +145,10 @@ impl S3Backend {
         tokio::select! {
             result = &mut request => {
                 result?;
-                print_upload_done(key, local_path, total_bytes, total_bytes)?;
+                print_upload_done(&progress, key, local_path, total_bytes, total_bytes)?;
             }
             _ = signal::ctrl_c() => {
-                print_upload_cancelled(key, local_path, progress.transferred(), total_bytes)?;
+                print_upload_cancelled(&progress, key, local_path, progress.position(), total_bytes)?;
                 return Err(io::Error::new(
                     ErrorKind::Interrupted,
                     format!("upload interrupted for `{key}`"),
@@ -223,7 +221,8 @@ impl S3Backend {
                             local_path.display()
                         )
                     })?;
-                print_download_done(key, local_path, total, Some(total))?;
+                let progress = ProgressBar::hidden();
+                print_download_done(&progress, key, local_path, total, Some(total))?;
                 return Ok(());
             }
         }
@@ -237,15 +236,13 @@ impl S3Backend {
         let mut stream = output.body;
         let mut file = open_download_file(&part_path, resume_from).await?;
         let mut downloaded = resume_from;
-        let mut last_update = Instant::now()
-            .checked_sub(Duration::from_secs(1))
-            .unwrap_or_else(Instant::now);
-
-        print_download_progress(key, local_path, downloaded, total_bytes)?;
+        eprintln!("{} {key} -> {}", ui::status_downloading(), local_path.display());
+        let progress = transfer_progress_bar(total_bytes.unwrap_or(resume_from))?;
+        progress.set_position(resume_from);
         loop {
             let chunk = tokio::select! {
                 _ = signal::ctrl_c() => {
-                    print_download_cancelled(key, local_path, downloaded, total_bytes, &part_path)?;
+                    print_download_cancelled(&progress, key, local_path, downloaded, total_bytes, &part_path)?;
                     return Err(io::Error::new(
                         ErrorKind::Interrupted,
                         format!(
@@ -265,11 +262,7 @@ impl S3Backend {
                 .await
                 .with_context(|| format!("failed to write {}", part_path.display()))?;
             downloaded += chunk.len() as u64;
-
-            if last_update.elapsed() >= Duration::from_millis(200) {
-                print_download_progress(key, local_path, downloaded, total_bytes)?;
-                last_update = Instant::now();
-            }
+            progress.inc(chunk.len() as u64);
         }
         file.flush()
             .await
@@ -285,7 +278,7 @@ impl S3Backend {
                     local_path.display()
                 )
             })?;
-        print_download_done(key, local_path, downloaded, total_bytes)?;
+        print_download_done(&progress, key, local_path, downloaded, total_bytes)?;
         Ok(())
     }
 
@@ -397,11 +390,16 @@ fn normalize_dir_key(key: &str) -> String {
 
 fn format_local_time(dt: &aws_sdk_s3::primitives::DateTime) -> Option<String> {
     let utc = DateTime::<Utc>::from_timestamp(dt.secs(), dt.subsec_nanos())?;
-    Some(
-        utc.with_timezone(&Local)
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string(),
-    )
+    let local = utc.with_timezone(&Local);
+    let now = Local::now();
+    let age = now.signed_duration_since(local);
+    let six_months = chrono::Duration::days(183);
+
+    if age >= chrono::Duration::zero() && age <= six_months {
+        Some(local.format("%b %e %H:%M").to_string())
+    } else {
+        Some(local.format("%b %e  %Y").to_string())
+    }
 }
 
 impl S3Backend {
@@ -466,232 +464,111 @@ async fn open_download_file(part_path: &Path, resume_from: u64) -> Result<File> 
         .with_context(|| format!("failed to open {}", part_path.display()))
 }
 
-fn print_download_progress(
-    key: &str,
-    local_path: &Path,
-    downloaded: u64,
-    total_bytes: Option<u64>,
-) -> Result<()> {
-    let mut stderr = io::stderr().lock();
-    let body = match total_bytes {
-        Some(total) if total > 0 => format!(
-            "\rdownloading {key} -> {} [{} / {} {:.1}%]",
-            local_path.display(),
-            human_bytes(downloaded),
-            human_bytes(total),
-            downloaded as f64 / total as f64 * 100.0
-        ),
-        _ => format!(
-            "\rdownloading {key} -> {} [{}]",
-            local_path.display(),
-            human_bytes(downloaded)
-        ),
-    };
-    let line = format!("{body}\x1b[K");
-
-    stderr
-        .write_all(line.as_bytes())
-        .map_err(|err| anyhow!("failed to write progress: {err}"))?;
-    stderr
-        .flush()
-        .map_err(|err| anyhow!("failed to flush progress: {err}"))?;
-    Ok(())
-}
-
 fn print_download_cancelled(
+    progress: &ProgressBar,
     key: &str,
     local_path: &Path,
     downloaded: u64,
     total_bytes: Option<u64>,
     part_path: &Path,
 ) -> Result<()> {
-    let mut stderr = io::stderr().lock();
+    progress.finish_and_clear();
     let progress = match total_bytes {
         Some(total) if total > 0 => format!(
             "{} / {} {:.1}%",
-            human_bytes(downloaded),
-            human_bytes(total),
+            ui::format_bytes(downloaded),
+            ui::format_bytes(total),
             downloaded as f64 / total as f64 * 100.0
         ),
-        _ => human_bytes(downloaded),
+        _ => ui::format_bytes(downloaded),
     };
-    let line = format!(
-        "\rcancelled {key} -> {} [{progress}] partial saved at {}\x1b[K\n",
+    eprintln!(
+        "{} {key} -> {} [{progress}]",
+        ui::status_cancelled(),
         local_path.display(),
-        part_path.display()
     );
-    stderr
-        .write_all(line.as_bytes())
-        .map_err(|err| anyhow!("failed to write progress: {err}"))?;
-    stderr
-        .flush()
-        .map_err(|err| anyhow!("failed to flush progress: {err}"))?;
-    Ok(())
-}
-
-fn print_upload_progress(
-    key: &str,
-    local_path: &Path,
-    uploaded: u64,
-    total_bytes: u64,
-) -> Result<()> {
-    let mut stderr = io::stderr().lock();
-    let body = format!(
-        "\ruploading {} -> {key} [{} / {} {:.1}%]",
-        local_path.display(),
-        human_bytes(uploaded),
-        human_bytes(total_bytes),
-        if total_bytes == 0 {
-            100.0
-        } else {
-            uploaded as f64 / total_bytes as f64 * 100.0
-        }
-    );
-    let line = format!("{body}\x1b[K");
-    stderr
-        .write_all(line.as_bytes())
-        .map_err(|err| anyhow!("failed to write progress: {err}"))?;
-    stderr
-        .flush()
-        .map_err(|err| anyhow!("failed to flush progress: {err}"))?;
+    eprintln!("{:>11} partial saved at {}", "", part_path.display());
     Ok(())
 }
 
 fn print_download_done(
+    progress: &ProgressBar,
     key: &str,
     local_path: &Path,
     downloaded: u64,
     total_bytes: Option<u64>,
 ) -> Result<()> {
-    let mut stderr = io::stderr().lock();
+    progress.finish_and_clear();
     let progress = match total_bytes {
         Some(total) if total > 0 => format!(
             "{} / {} {:.1}%",
-            human_bytes(downloaded),
-            human_bytes(total),
+            ui::format_bytes(downloaded),
+            ui::format_bytes(total),
             downloaded as f64 / total as f64 * 100.0
         ),
-        _ => human_bytes(downloaded),
+        _ => ui::format_bytes(downloaded),
     };
-    let line = format!(
-        "\r\x1b[Kdone {key} -> {} [{progress}]\n",
+    eprintln!(
+        "{} {key} -> {} [{progress}]",
+        ui::status_done(),
         local_path.display()
     );
-    stderr
-        .write_all(line.as_bytes())
-        .map_err(|err| anyhow!("failed to write progress: {err}"))?;
-    stderr
-        .flush()
-        .map_err(|err| anyhow!("failed to flush progress: {err}"))?;
     Ok(())
 }
 
-fn print_upload_done(key: &str, local_path: &Path, uploaded: u64, total_bytes: u64) -> Result<()> {
-    let mut stderr = io::stderr().lock();
-    let line = format!(
-        "\r\x1b[Kdone {} -> {key} [{} / {} {:.1}%]\n",
-        local_path.display(),
-        human_bytes(uploaded),
-        human_bytes(total_bytes),
-        if total_bytes == 0 {
-            100.0
-        } else {
-            uploaded as f64 / total_bytes as f64 * 100.0
-        }
-    );
-    stderr
-        .write_all(line.as_bytes())
-        .map_err(|err| anyhow!("failed to write progress: {err}"))?;
-    stderr
-        .flush()
-        .map_err(|err| anyhow!("failed to flush progress: {err}"))?;
-    Ok(())
-}
-
-fn print_upload_cancelled(
+fn print_upload_done(
+    progress: &ProgressBar,
     key: &str,
     local_path: &Path,
     uploaded: u64,
     total_bytes: u64,
 ) -> Result<()> {
-    let mut stderr = io::stderr().lock();
-    let line = format!(
-        "\rcancelled upload {} -> {key} [{} / {} {:.1}%]\x1b[K\n",
+    progress.finish_and_clear();
+    eprintln!(
+        "{} {} -> {key} [{} / {} {:.1}%]",
+        ui::status_done(),
         local_path.display(),
-        human_bytes(uploaded),
-        human_bytes(total_bytes),
+        ui::format_bytes(uploaded),
+        ui::format_bytes(total_bytes),
         if total_bytes == 0 {
             100.0
         } else {
             uploaded as f64 / total_bytes as f64 * 100.0
         }
     );
-    stderr
-        .write_all(line.as_bytes())
-        .map_err(|err| anyhow!("failed to write progress: {err}"))?;
-    stderr
-        .flush()
-        .map_err(|err| anyhow!("failed to flush progress: {err}"))?;
     Ok(())
 }
 
-struct UploadProgress {
+fn print_upload_cancelled(
+    progress: &ProgressBar,
+    key: &str,
+    local_path: &Path,
+    uploaded: u64,
     total_bytes: u64,
-    transferred: AtomicU64,
-    last_update: std::sync::Mutex<Instant>,
+) -> Result<()> {
+    progress.finish_and_clear();
+    eprintln!(
+        "{} upload {} -> {key} [{} / {} {:.1}%]",
+        ui::status_cancelled(),
+        local_path.display(),
+        ui::format_bytes(uploaded),
+        ui::format_bytes(total_bytes),
+        if total_bytes == 0 {
+            100.0
+        } else {
+            uploaded as f64 / total_bytes as f64 * 100.0
+        }
+    );
+    Ok(())
 }
 
-impl UploadProgress {
-    fn new(total_bytes: u64) -> Self {
-        Self {
-            total_bytes,
-            transferred: AtomicU64::new(0),
-            last_update: std::sync::Mutex::new(
-                Instant::now()
-                    .checked_sub(Duration::from_secs(1))
-                    .unwrap_or_else(Instant::now),
-            ),
-        }
-    }
-
-    fn advance(&self, chunk_len: u64) {
-        self.transferred.fetch_add(chunk_len, Ordering::Relaxed);
-    }
-
-    fn transferred(&self) -> u64 {
-        self.transferred.load(Ordering::Relaxed)
-    }
-
-    fn maybe_print(&self, key: &str, local_path: &str) -> Result<()> {
-        let mut last_update = self
-            .last_update
-            .lock()
-            .map_err(|_| anyhow!("upload progress lock poisoned"))?;
-        if last_update.elapsed() < Duration::from_millis(200) {
-            return Ok(());
-        }
-        *last_update = Instant::now();
-        print_upload_progress(
-            key,
-            Path::new(local_path),
-            self.transferred(),
-            self.total_bytes,
-        )
-    }
-}
-
-fn human_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-
-    if unit == 0 {
-        format!("{bytes} {}", UNITS[unit])
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
+fn transfer_progress_bar(total_bytes: u64) -> Result<ProgressBar> {
+    let progress = ProgressBar::new(total_bytes);
+    let style = ProgressStyle::with_template(
+        "{spinner:.cyan} [{elapsed_precise}] [{bar:28.cyan/blue}] {bytes:>8}/{total_bytes:8} ({eta})",
+    )?
+    .progress_chars("#>-");
+    progress.set_style(style);
+    progress.enable_steady_tick(Duration::from_millis(120));
+    Ok(progress)
 }
