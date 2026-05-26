@@ -26,7 +26,7 @@ pub struct ProfileConfig {
 impl AppConfig {
     pub fn load(override_path: Option<&Path>) -> Result<Self> {
         let path = match override_path {
-            Some(p) => p.to_path_buf(),
+            Some(path) => path.to_path_buf(),
             None => default_config_path()
                 .ok_or_else(|| anyhow!("could not determine config path"))?,
         };
@@ -55,12 +55,9 @@ impl ProfileConfig {
 }
 
 fn default_config_path() -> Option<PathBuf> {
-    env::var_os("HOME").map(|home| {
-        PathBuf::from(home)
-            .join(".config")
-            .join("bucketctl")
-            .join("config.toml")
-    })
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".config").join("bucketctl").join("config.toml"))
 }
 
 fn resolve_secret(value: &str, field: &str) -> Result<String> {

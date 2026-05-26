@@ -14,7 +14,7 @@
 ~/.config/bucketctl/config.toml
 ```
 
-也可以通过 `-c <PATH>` 或 `--config <PATH>` 指定其他路径，例如：
+也可以通过 `-c <PATH>` 或 `--config <PATH>` 指定其他路径：
 
 ```bash
 bucketctl -c ./my-config.toml ls
@@ -57,13 +57,8 @@ bash -c "$(curl -fsSL https://github.com/barkure/bucketctl/raw/main/install.sh)"
 
 ```bash
 bucketctl ls
-bucketctl ls <mybucket>
 bucketctl ls <mybucket>:/path
-bucketctl put <local> <mybucket>:/path
-bucketctl get <mybucket>:/path [local]
-bucketctl mkdir <mybucket>:/path
-bucketctl rm <mybucket>:/path
-bucketctl rm -r <mybucket>:/path
+bucketctl get <mybucket>:/path/file .
 ```
 
 ### 交互模式
