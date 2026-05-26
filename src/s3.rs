@@ -1,22 +1,22 @@
 use std::{
+    io::{self, ErrorKind, Write},
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    io::{self, ErrorKind, Write},
-    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow};
-use aws_smithy_types::body::SdkBody;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{
     Client,
-    config::{BehaviorVersion, Builder, Region},
+    config::{BehaviorVersion, Builder, Region, StalledStreamProtectionConfig},
     primitives::ByteStream,
     types::{CommonPrefix, Delete, Object, ObjectIdentifier},
 };
+use aws_smithy_types::body::SdkBody;
 use chrono::{DateTime, Local, Utc};
 use futures_util::TryStreamExt;
 use http_body::Frame;
@@ -56,7 +56,13 @@ impl S3Backend {
             .behavior_version(BehaviorVersion::latest())
             .credentials_provider(credentials)
             .endpoint_url(profile.endpoint.clone())
-            .force_path_style(profile.path_style);
+            .force_path_style(profile.path_style)
+            .stalled_stream_protection(
+                StalledStreamProtectionConfig::enabled()
+                    .upload_enabled(false)
+                    .download_enabled(false)
+                    .build(),
+            );
         builder.set_region(Some(Region::new(profile.region.clone())));
 
         Ok(Self {
@@ -108,19 +114,19 @@ impl S3Backend {
     }
 
     pub async fn put_file(&self, bucket: &str, key: &str, local_path: &Path) -> Result<()> {
-        let file = File::open(local_path)
-            .await
-            .with_context(|| format!("failed to read {}", local_path.display()))?;
         let total_bytes = tokio::fs::metadata(local_path)
             .await
             .with_context(|| format!("failed to inspect {}", local_path.display()))?
             .len();
+        let file = File::open(local_path)
+            .await
+            .with_context(|| format!("failed to read {}", local_path.display()))?;
         let progress = Arc::new(UploadProgress::new(total_bytes));
         let progress_for_stream = progress.clone();
         let local_display = local_path.display().to_string();
         let key_display = key.to_owned();
 
-        print_upload_progress(key, local_path, 0, total_bytes, false)?;
+        print_upload_progress(key, local_path, 0, total_bytes)?;
 
         let stream = ReaderStream::with_capacity(file, 256 * 1024).inspect_ok(move |chunk| {
             progress_for_stream.advance(chunk.len() as u64);
@@ -141,7 +147,7 @@ impl S3Backend {
         tokio::select! {
             result = &mut request => {
                 result?;
-                print_upload_progress(key, local_path, total_bytes, total_bytes, true)?;
+                print_upload_done(key, local_path, total_bytes, total_bytes)?;
             }
             _ = signal::ctrl_c() => {
                 print_upload_cancelled(key, local_path, progress.transferred(), total_bytes)?;
@@ -217,7 +223,7 @@ impl S3Backend {
                             local_path.display()
                         )
                     })?;
-                print_download_progress(key, local_path, total, Some(total), true)?;
+                print_download_done(key, local_path, total, Some(total))?;
                 return Ok(());
             }
         }
@@ -235,14 +241,17 @@ impl S3Backend {
             .checked_sub(Duration::from_secs(1))
             .unwrap_or_else(Instant::now);
 
-        print_download_progress(key, local_path, downloaded, total_bytes, false)?;
+        print_download_progress(key, local_path, downloaded, total_bytes)?;
         loop {
             let chunk = tokio::select! {
                 _ = signal::ctrl_c() => {
                     print_download_cancelled(key, local_path, downloaded, total_bytes, &part_path)?;
                     return Err(io::Error::new(
                         ErrorKind::Interrupted,
-                        format!("download interrupted; partial file kept at {}", part_path.display()),
+                        format!(
+                            "download interrupted; partial file kept at {}",
+                            part_path.display()
+                        ),
                     ).into());
                 }
                 chunk = stream.next() => chunk,
@@ -258,7 +267,7 @@ impl S3Backend {
             downloaded += chunk.len() as u64;
 
             if last_update.elapsed() >= Duration::from_millis(200) {
-                print_download_progress(key, local_path, downloaded, total_bytes, false)?;
+                print_download_progress(key, local_path, downloaded, total_bytes)?;
                 last_update = Instant::now();
             }
         }
@@ -276,7 +285,7 @@ impl S3Backend {
                     local_path.display()
                 )
             })?;
-        print_download_progress(key, local_path, downloaded, total_bytes, true)?;
+        print_download_done(key, local_path, downloaded, total_bytes)?;
         Ok(())
     }
 
@@ -423,13 +432,14 @@ impl S3Backend {
 
         Ok(keys)
     }
+
 }
 
 fn download_part_path(local_path: &Path) -> PathBuf {
     let file_name = local_path
         .file_name()
-        .map(|name| format!("{}.part", name.to_string_lossy()))
-        .unwrap_or_else(|| ".part".to_owned());
+        .map(|name| format!("{}.download", name.to_string_lossy()))
+        .unwrap_or_else(|| ".download".to_owned());
     local_path.with_file_name(file_name)
 }
 
@@ -461,33 +471,27 @@ fn print_download_progress(
     local_path: &Path,
     downloaded: u64,
     total_bytes: Option<u64>,
-    done: bool,
 ) -> Result<()> {
     let mut stderr = io::stderr().lock();
-    let status = if done { "done" } else { "downloading" };
-    let line = match total_bytes {
+    let body = match total_bytes {
         Some(total) if total > 0 => format!(
-            "\r{status} {key} -> {} [{} / {} {:.1}%]",
+            "\rdownloading {key} -> {} [{} / {} {:.1}%]",
             local_path.display(),
             human_bytes(downloaded),
             human_bytes(total),
             downloaded as f64 / total as f64 * 100.0
         ),
         _ => format!(
-            "\r{status} {key} -> {} [{}]",
+            "\rdownloading {key} -> {} [{}]",
             local_path.display(),
             human_bytes(downloaded)
         ),
     };
+    let line = format!("{body}\x1b[K");
 
     stderr
         .write_all(line.as_bytes())
         .map_err(|err| anyhow!("failed to write progress: {err}"))?;
-    if done {
-        stderr
-            .write_all(b"\n")
-            .map_err(|err| anyhow!("failed to write progress: {err}"))?;
-    }
     stderr
         .flush()
         .map_err(|err| anyhow!("failed to flush progress: {err}"))?;
@@ -512,7 +516,7 @@ fn print_download_cancelled(
         _ => human_bytes(downloaded),
     };
     let line = format!(
-        "\rcancelled {key} -> {} [{progress}] partial saved at {}\n",
+        "\rcancelled {key} -> {} [{progress}] partial saved at {}\x1b[K\n",
         local_path.display(),
         part_path.display()
     );
@@ -530,12 +534,10 @@ fn print_upload_progress(
     local_path: &Path,
     uploaded: u64,
     total_bytes: u64,
-    done: bool,
 ) -> Result<()> {
     let mut stderr = io::stderr().lock();
-    let status = if done { "done" } else { "uploading" };
     let body = format!(
-        "\r{status} {} -> {key} [{} / {} {:.1}%]",
+        "\ruploading {} -> {key} [{} / {} {:.1}%]",
         local_path.display(),
         human_bytes(uploaded),
         human_bytes(total_bytes),
@@ -549,11 +551,57 @@ fn print_upload_progress(
     stderr
         .write_all(line.as_bytes())
         .map_err(|err| anyhow!("failed to write progress: {err}"))?;
-    if done {
-        stderr
-            .write_all(b"\n")
-            .map_err(|err| anyhow!("failed to write progress: {err}"))?;
-    }
+    stderr
+        .flush()
+        .map_err(|err| anyhow!("failed to flush progress: {err}"))?;
+    Ok(())
+}
+
+fn print_download_done(
+    key: &str,
+    local_path: &Path,
+    downloaded: u64,
+    total_bytes: Option<u64>,
+) -> Result<()> {
+    let mut stderr = io::stderr().lock();
+    let progress = match total_bytes {
+        Some(total) if total > 0 => format!(
+            "{} / {} {:.1}%",
+            human_bytes(downloaded),
+            human_bytes(total),
+            downloaded as f64 / total as f64 * 100.0
+        ),
+        _ => human_bytes(downloaded),
+    };
+    let line = format!(
+        "\r\x1b[Kdone {key} -> {} [{progress}]\n",
+        local_path.display()
+    );
+    stderr
+        .write_all(line.as_bytes())
+        .map_err(|err| anyhow!("failed to write progress: {err}"))?;
+    stderr
+        .flush()
+        .map_err(|err| anyhow!("failed to flush progress: {err}"))?;
+    Ok(())
+}
+
+fn print_upload_done(key: &str, local_path: &Path, uploaded: u64, total_bytes: u64) -> Result<()> {
+    let mut stderr = io::stderr().lock();
+    let line = format!(
+        "\r\x1b[Kdone {} -> {key} [{} / {} {:.1}%]\n",
+        local_path.display(),
+        human_bytes(uploaded),
+        human_bytes(total_bytes),
+        if total_bytes == 0 {
+            100.0
+        } else {
+            uploaded as f64 / total_bytes as f64 * 100.0
+        }
+    );
+    stderr
+        .write_all(line.as_bytes())
+        .map_err(|err| anyhow!("failed to write progress: {err}"))?;
     stderr
         .flush()
         .map_err(|err| anyhow!("failed to flush progress: {err}"))?;
@@ -628,7 +676,6 @@ impl UploadProgress {
             Path::new(local_path),
             self.transferred(),
             self.total_bytes,
-            false,
         )
     }
 }

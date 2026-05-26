@@ -45,7 +45,7 @@ bash -c "$(curl -fsSL https://github.com/barkure/bucketctl/raw/main/install.sh)"
 
 ## Usage
 
-### Command mode
+### Command Mode
 
 ```bash
 bucketctl ls
@@ -58,7 +58,7 @@ bucketctl rm <mybucket>:/path
 bucketctl rm -r <mybucket>:/path
 ```
 
-### Interactive mode
+### Interactive Mode
 
 ```bash
 bucketctl <mybucket>
@@ -79,7 +79,7 @@ Available commands:
 - `Ctrl-C` cancels the current transfer
 - `Ctrl-D` exits the shell
 
-### Alias (optional)
+### Alias (Optional)
 
 Add to your shell config file:
 
