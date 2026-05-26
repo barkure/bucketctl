@@ -145,11 +145,22 @@ fn run_command(
                 bail!("usage: put <local> [remote]");
             }
             let local = PathBuf::from(&parts[1]);
-            let (bucket, key, s3) = with_session(session, |sess| -> Result<_> {
+            let (bucket, remote, s3) = with_session(session, |sess| -> Result<_> {
                 let bucket = sess.selected_bucket()?.to_owned();
-                let key = sess.resolve_upload_target(&local, parts.get(2).map(String::as_str))?;
-                Ok((bucket, key, sess.selected_s3()?.clone()))
+                Ok((
+                    bucket,
+                    parts.get(2).map(String::to_owned),
+                    sess.selected_s3()?.clone(),
+                ))
             })??;
+            let key = match remote.as_deref() {
+                Some(remote) if !remote.ends_with('/') && runtime.block_on(s3.remote_dir_exists(&bucket, remote))? => {
+                    with_session(session, |sess| sess.resolve_upload_target_in_dir(&local, remote))??
+                }
+                _ => with_session(session, |sess| {
+                    sess.resolve_upload_target(&local, remote.as_deref())
+                })??,
+            };
             if let Err(err) = runtime.block_on(s3.put_file(&bucket, &key, &local)) {
                 if is_interrupted(&err) {
                     return Ok(false);
@@ -267,11 +278,16 @@ pub fn run_noninteractive_command_line(
             let local = PathBuf::from(&parts[1]);
             let (profile, remote) = parse_remote_target(&parts[2])?;
             attach_profile_for_command(runtime, session, &profile)?;
-            let (bucket, key, s3) = with_session(session, |sess| -> Result<_> {
+            let (bucket, s3) = with_session(session, |sess| -> Result<_> {
                 let bucket = sess.selected_bucket()?.to_owned();
-                let key = sess.resolve_upload_target(&local, Some(&remote))?;
-                Ok((bucket, key, sess.selected_s3()?.clone()))
+                Ok((bucket, sess.selected_s3()?.clone()))
             })??;
+            let key =
+                if !remote.ends_with('/') && runtime.block_on(s3.remote_dir_exists(&bucket, &remote))? {
+                    with_session(session, |sess| sess.resolve_upload_target_in_dir(&local, &remote))??
+                } else {
+                    with_session(session, |sess| sess.resolve_upload_target(&local, Some(&remote)))??
+                };
             runtime.block_on(s3.put_file(&bucket, &key, &local))?;
             Ok(false)
         }
@@ -418,7 +434,11 @@ fn run_local_shell(command: &str) -> Result<()> {
     let mut process = Command::new(&shell);
     match shell_name {
         "zsh" | "bash" => {
-            process.arg("-ilc").arg(command);
+            process
+                .arg("-lc")
+                .arg(build_shell_command(shell_name))
+                .arg(shell_name)
+                .arg(command);
         }
         _ => {
             process.arg("-c").arg(command);
@@ -430,6 +450,24 @@ fn run_local_shell(command: &str) -> Result<()> {
         Ok(())
     } else {
         Err(anyhow!("local command exited with status {status}"))
+    }
+}
+
+fn build_shell_command(shell_name: &str) -> String {
+    match shell_name {
+        "zsh" => [
+            "setopt aliases",
+            "source ~/.zshrc >/dev/null 2>&1 || true",
+            "eval \"$1\"",
+        ]
+        .join("\n"),
+        "bash" => [
+            "shopt -s expand_aliases",
+            "source ~/.bashrc >/dev/null 2>&1 || true",
+            "eval \"$1\"",
+        ]
+        .join("\n"),
+        _ => "eval \"$1\"".to_owned(),
     }
 }
 

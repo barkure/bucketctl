@@ -94,6 +94,14 @@ impl Session {
         self.resolve_remote(file_name)
     }
 
+    pub fn resolve_upload_target_in_dir(&self, local: &Path, remote_dir: &str) -> Result<String> {
+        let file_name = local
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| anyhow!("local path must point to a file name"))?;
+        self.resolve_remote(&format!("{}/{}", remote_dir.trim_end_matches('/'), file_name))
+    }
+
     pub fn resolve_download_target(remote: &str, local: Option<&str>) -> Result<PathBuf> {
         if let Some(local) = local {
             return Ok(PathBuf::from(local));

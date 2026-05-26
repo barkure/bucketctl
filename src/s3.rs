@@ -166,6 +166,28 @@ impl S3Backend {
         Ok(())
     }
 
+    pub async fn remote_dir_exists(&self, bucket: &str, key: &str) -> Result<bool> {
+        let prefix = normalize_dir_key(key);
+        if prefix.is_empty() {
+            return Ok(false);
+        }
+
+        let output = self
+            .client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(prefix)
+            .max_keys(1)
+            .send()
+            .await?;
+
+        Ok(
+            !output.contents().is_empty()
+                || !output.common_prefixes().is_empty()
+                || output.key_count().unwrap_or_default() > 0,
+        )
+    }
+
     pub async fn get_file(&self, bucket: &str, key: &str, local_path: &Path) -> Result<()> {
         let metadata = self
             .client
@@ -512,7 +534,7 @@ fn print_upload_progress(
 ) -> Result<()> {
     let mut stderr = io::stderr().lock();
     let status = if done { "done" } else { "uploading" };
-    let line = format!(
+    let body = format!(
         "\r{status} {} -> {key} [{} / {} {:.1}%]",
         local_path.display(),
         human_bytes(uploaded),
@@ -523,6 +545,7 @@ fn print_upload_progress(
             uploaded as f64 / total_bytes as f64 * 100.0
         }
     );
+    let line = format!("{body}\x1b[K");
     stderr
         .write_all(line.as_bytes())
         .map_err(|err| anyhow!("failed to write progress: {err}"))?;
@@ -545,7 +568,7 @@ fn print_upload_cancelled(
 ) -> Result<()> {
     let mut stderr = io::stderr().lock();
     let line = format!(
-        "\rcancelled upload {} -> {key} [{} / {} {:.1}%]\n",
+        "\rcancelled upload {} -> {key} [{} / {} {:.1}%]\x1b[K\n",
         local_path.display(),
         human_bytes(uploaded),
         human_bytes(total_bytes),
