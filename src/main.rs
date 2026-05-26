@@ -8,7 +8,7 @@ mod ui;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use cli::Cli;
 use config::AppConfig;
 use repl::run_repl;
@@ -17,14 +17,19 @@ use session::Session;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let config = AppConfig::load()?;
-    let profiles = config.profiles.clone().into_iter().collect();
-    let args = cli.args;
-
-    if args.len() == 1 && matches!(args[0].as_str(), "-v" | "--version") {
+    if cli.help {
+        Cli::command().print_help()?;
+        println!();
+        return Ok(());
+    }
+    if cli.version {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+
+    let config = AppConfig::load(cli.config.as_deref())?;
+    let profiles = config.profiles.clone().into_iter().collect();
+    let args = cli.args;
 
     let runtime = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
@@ -62,11 +67,6 @@ fn main() -> Result<()> {
 fn looks_like_command(token: &str) -> bool {
     matches!(
         token,
-        "help"
-            | "ls"
-            | "mkdir"
-            | "put"
-            | "get"
-            | "rm"
+        "help" | "ls" | "mkdir" | "put" | "get" | "rm"
     ) || token.starts_with('!')
 }

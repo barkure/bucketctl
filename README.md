@@ -13,6 +13,14 @@ Config path:
 ```text
 ~/.config/bucketctl/config.toml
 ```
+
+Override it with `-c <PATH>` or `--config <PATH>`:
+
+```bash
+bucketctl -c ./my-config.toml ls
+bucketctl --config ~/work/bucketctl.toml mybucket
+```
+
 You can define multiple profiles. Each profile maps to one bucket.
 
 Example:
@@ -49,13 +57,8 @@ bash -c "$(curl -fsSL https://github.com/barkure/bucketctl/raw/main/install.sh)"
 
 ```bash
 bucketctl ls
-bucketctl ls <mybucket>
 bucketctl ls <mybucket>:/path
-bucketctl put <local> <mybucket>:/path
-bucketctl get <mybucket>:/path [local]
-bucketctl mkdir <mybucket>:/path
-bucketctl rm <mybucket>:/path
-bucketctl rm -r <mybucket>:/path
+bucketctl get <mybucket>:/path/file .
 ```
 
 ### Interactive Mode
