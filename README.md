@@ -13,6 +13,14 @@ Config path:
 ```text
 ~/.config/bucketctl/config.toml
 ```
+
+You can override this with `-c <PATH>` or `--config <PATH>`, for example:
+
+```bash
+bucketctl -c ./my-config.toml ls
+bucketctl --config ~/work/bucketctl.toml mybucket
+```
+
 You can define multiple profiles. Each profile maps to one bucket.
 
 Example:

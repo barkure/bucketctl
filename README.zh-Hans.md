@@ -14,6 +14,13 @@
 ~/.config/bucketctl/config.toml
 ```
 
+也可以通过 `-c <PATH>` 或 `--config <PATH>` 指定其他路径，例如：
+
+```bash
+bucketctl -c ./my-config.toml ls
+bucketctl --config ~/work/bucketctl.toml mybucket
+```
+
 可以定义多个 profile。每个 profile 对应一个固定桶（bucket）。
 
 示例：
