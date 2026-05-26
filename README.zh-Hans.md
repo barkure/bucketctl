@@ -2,18 +2,19 @@
 
 # bucketctl
 
-A simple S3 command-line tool with an SFTP-like workflow.
+一个简单的 S3 命令行工具，使用方式接近 SFTP。
 
-## Config
+## 配置
 
-Config path:
+配置文件路径：
 
 ```text
 ~/.config/bucketctl/config.toml
 ```
-You can define multiple profiles. Each profile maps to one bucket.
 
-Example:
+可以定义多个 profile。每个 profile 对应一个固定桶（bucket）。
+
+示例：
 
 ```toml
 [mybucket]
@@ -27,23 +28,23 @@ secret_key = "env:SECRET_KEY"
 path_style = false
 ```
 
-## Installation
+## 安装
 
-Install the latest matching release:
+安装最新匹配当前系统的 release：
 
 ```bash
 bash -c "$(curl -fsSL https://github.com/barkure/bucketctl/raw/main/install.sh)" @ install
 ```
 
-Remove it:
+卸载：
 
 ```bash
 bash -c "$(curl -fsSL https://github.com/barkure/bucketctl/raw/main/install.sh)" @ remove
 ```
 
-## Usage
+## 使用
 
-### Command mode
+### 命令模式：
 
 ```bash
 bucketctl ls
@@ -56,13 +57,13 @@ bucketctl rm <mybucket>:/path
 bucketctl rm -r <mybucket>:/path
 ```
 
-### Interactive mode
+### 交互模式
 
 ```bash
 bucketctl <mybucket>
 ```
 
-Available commands:
+进入后可用：
 - `ls [path]`
 - `cd [path]`
 - `pwd`
@@ -74,5 +75,5 @@ Available commands:
 - `help`
 - `exit`
 - `!<local command>`
-- `Ctrl-C` cancels the current transfer
-- `Ctrl-D` exits the shell
+- `Ctrl-C` 取消当前传输
+- `Ctrl-D` 退出 shell

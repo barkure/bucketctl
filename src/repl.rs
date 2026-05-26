@@ -53,20 +53,7 @@ pub fn run_repl(runtime: Arc<Runtime>, session: Arc<Mutex<Session>>) -> Result<(
                 }
             }
             Err(ReadlineError::Interrupted) => continue,
-            Err(ReadlineError::Eof) => {
-                let detached = with_session_mut(&session, |sess| {
-                    if sess.current_profile().is_some() {
-                        sess.clear_profile();
-                        true
-                    } else {
-                        false
-                    }
-                })?;
-                if detached {
-                    continue;
-                }
-                break;
-            }
+            Err(ReadlineError::Eof) => break,
             Err(err) => return Err(err.into()),
         }
     }
@@ -75,6 +62,14 @@ pub fn run_repl(runtime: Arc<Runtime>, session: Arc<Mutex<Session>>) -> Result<(
 }
 
 pub fn run_command_line(
+    runtime: &Arc<Runtime>,
+    session: &Arc<Mutex<Session>>,
+    line: &str,
+) -> Result<bool> {
+    run_command(runtime, session, line)
+}
+
+fn run_command(
     runtime: &Arc<Runtime>,
     session: &Arc<Mutex<Session>>,
     line: &str,
@@ -90,93 +85,45 @@ pub fn run_command_line(
 
     match parts[0].as_str() {
         "help" => {
-            let profile_attached =
-                with_session(session, |sess| sess.current_profile().is_some())?;
-            print_help(profile_attached);
+            print_help();
             Ok(false)
         }
         "exit" => Ok(true),
         "pwd" => {
-            let location = with_session(session, |sess| {
-                if sess.current_profile().is_none() {
-                    bail!("`pwd` is only available inside a bucket");
-                }
-                Ok(sess.location_display())
-            })??;
+            let location = with_session(session, |sess| sess.location_display())?;
             println!("{location}");
             Ok(false)
         }
         "ls" => {
-            let (profile, target, s3, profiles) = with_session(session, |sess| {
-                (
-                    sess.current_profile().map(ToOwned::to_owned),
-                    parts.get(1).cloned(),
-                    sess.s3.clone(),
-                    sess.list_profiles(),
-                )
-            })?;
-
-            if profile.is_none() {
-                for profile in profiles {
-                    println!("{profile}");
-                }
-            } else {
-                let s3 = s3.ok_or_else(|| anyhow!("no profile attached"))?;
-                let bucket =
-                    with_session(session, |sess| sess.selected_bucket().map(ToOwned::to_owned))??;
-                let prefix = with_session(session, |sess| -> Result<_> {
-                    sess.resolve_remote(target.as_deref().unwrap_or("."))
-                })??;
-                for entry in runtime.block_on(s3.list_prefix(&bucket, &prefix))? {
-                    if entry.is_dir {
-                        if let Some(modified) = entry.modified.as_deref() {
-                            println!("{:>10}  {modified}  {}/", "-", entry.name);
-                        } else {
-                            println!("{:>10}  {:19}  {}/", "-", "", entry.name);
-                        }
-                    } else if let Some(size) = entry.size {
-                        let size = human_bytes(size.max(0) as u64);
-                        if let Some(modified) = entry.modified.as_deref() {
-                            println!("{size:>10}  {modified}  {}", entry.name);
-                        } else {
-                            println!("{size:>10}  {}", entry.name);
-                        }
+            let target = parts.get(1).cloned();
+            let (bucket, prefix, s3) = with_session(session, |sess| -> Result<_> {
+                let bucket = sess.selected_bucket()?.to_owned();
+                let prefix = sess.resolve_remote(target.as_deref().unwrap_or("."))?;
+                Ok((bucket, prefix, sess.selected_s3()?.clone()))
+            })??;
+            for entry in runtime.block_on(s3.list_prefix(&bucket, &prefix))? {
+                if entry.is_dir {
+                    if let Some(modified) = entry.modified.as_deref() {
+                        println!("{:>10}  {modified}  {}/", "-", entry.name);
                     } else {
-                        println!("{}", entry.name);
+                        println!("{:>10}  {:19}  {}/", "-", "", entry.name);
                     }
+                } else if let Some(size) = entry.size {
+                    let size = human_bytes(size.max(0) as u64);
+                    if let Some(modified) = entry.modified.as_deref() {
+                        println!("{size:>10}  {modified}  {}", entry.name);
+                    } else {
+                        println!("{size:>10}  {}", entry.name);
+                    }
+                } else {
+                    println!("{}", entry.name);
                 }
             }
-            Ok(false)
-        }
-        "attach" => {
-            if parts.len() != 2 {
-                bail!("usage: attach <profile>");
-            }
-            let target = parts[1].as_str();
-            let profile =
-                with_session(session, |sess| sess.profile_config(target).cloned())??;
-            let s3 = runtime.block_on(S3Backend::connect(&profile))?;
-            with_session_mut(session, |sess| {
-                sess.attach_profile(target.to_owned(), profile.bucket.clone(), s3)
-            })?;
             Ok(false)
         }
         "cd" => {
             let target = parts.get(1).map(String::as_str).unwrap_or("/");
-            let current_profile =
-                with_session(session, |sess| sess.current_profile().map(ToOwned::to_owned))?;
-            let new_dir = if current_profile.is_some() {
-                with_session_mut(session, |sess| {
-                    if target == ".." && sess.in_bucket_root() {
-                        return Ok(sess.cwd_display());
-                    }
-                    sess.change_dir(target)
-                })??
-            } else if target == "/" || target == "." || target.is_empty() {
-                "/".to_owned()
-            } else {
-                bail!("no profile attached; use `attach <profile>` first");
-            };
+            let new_dir = with_session_mut(session, |sess| sess.change_dir(target))??;
             println!("{new_dir}");
             Ok(false)
         }
@@ -258,16 +205,138 @@ pub fn run_command_line(
     }
 }
 
-fn print_help(profile_attached: bool) {
-    if !profile_attached {
-        println!("ls");
-        println!("attach <profile>");
-        println!("!<command>");
-        println!("Ctrl-D");
-        println!("exit");
-        return;
+pub fn run_noninteractive_command_line(
+    runtime: &Arc<Runtime>,
+    session: &Arc<Mutex<Session>>,
+    line: &str,
+) -> Result<bool> {
+    if let Some(command) = line.strip_prefix('!') {
+        return run_local_shell(command).map(|_| false);
     }
 
+    let parts = shlex::split(line).ok_or_else(|| anyhow!("failed to parse command line"))?;
+    if parts.is_empty() {
+        return Ok(false);
+    }
+
+    match parts[0].as_str() {
+        "help" => {
+            print_noninteractive_help();
+            Ok(false)
+        }
+        "ls" => {
+            if let Some(target) = parts.get(1) {
+                let (profile, remote) = parse_ls_target(target)?;
+                attach_profile_for_command(runtime, session, &profile)?;
+                let bucket =
+                    with_session(session, |sess| sess.selected_bucket().map(ToOwned::to_owned))??;
+                let s3 = with_session(session, |sess| sess.selected_s3().map(Clone::clone))??;
+                let prefix = with_session(session, |sess| -> Result<_> {
+                    sess.resolve_remote(remote.as_deref().unwrap_or("."))
+                })??;
+                for entry in runtime.block_on(s3.list_prefix(&bucket, &prefix))? {
+                    if entry.is_dir {
+                        if let Some(modified) = entry.modified.as_deref() {
+                            println!("{:>10}  {modified}  {}/", "-", entry.name);
+                        } else {
+                            println!("{:>10}  {:19}  {}/", "-", "", entry.name);
+                        }
+                    } else if let Some(size) = entry.size {
+                        let size = human_bytes(size.max(0) as u64);
+                        if let Some(modified) = entry.modified.as_deref() {
+                            println!("{size:>10}  {modified}  {}", entry.name);
+                        } else {
+                            println!("{size:>10}  {}", entry.name);
+                        }
+                    } else {
+                        println!("{}", entry.name);
+                    }
+                }
+            } else {
+                let profiles = with_session(session, |sess| sess.list_profiles())?;
+                for profile in profiles {
+                    println!("{profile}");
+                }
+            }
+            Ok(false)
+        }
+        "put" => {
+            if parts.len() != 3 {
+                bail!("usage: put <local> <profile>:/path");
+            }
+            let local = PathBuf::from(&parts[1]);
+            let (profile, remote) = parse_remote_target(&parts[2])?;
+            attach_profile_for_command(runtime, session, &profile)?;
+            let (bucket, key, s3) = with_session(session, |sess| -> Result<_> {
+                let bucket = sess.selected_bucket()?.to_owned();
+                let key = sess.resolve_upload_target(&local, Some(&remote))?;
+                Ok((bucket, key, sess.selected_s3()?.clone()))
+            })??;
+            runtime.block_on(s3.put_file(&bucket, &key, &local))?;
+            Ok(false)
+        }
+        "get" => {
+            if parts.len() < 2 || parts.len() > 3 {
+                bail!("usage: get <profile>:/path [local]");
+            }
+            let (profile, remote) = parse_remote_target(&parts[1])?;
+            let local =
+                Session::resolve_download_target(&remote, parts.get(2).map(String::as_str))?;
+            attach_profile_for_command(runtime, session, &profile)?;
+            let (bucket, key, s3) = with_session(session, |sess| -> Result<_> {
+                let bucket = sess.selected_bucket()?.to_owned();
+                let key = sess.resolve_remote(&remote)?;
+                Ok((bucket, key, sess.selected_s3()?.clone()))
+            })??;
+            runtime.block_on(s3.get_file(&bucket, &key, &local))?;
+            Ok(false)
+        }
+        "mkdir" => {
+            if parts.len() != 2 {
+                bail!("usage: mkdir <profile>:/path");
+            }
+            let (profile, remote) = parse_remote_target(&parts[1])?;
+            attach_profile_for_command(runtime, session, &profile)?;
+            let (bucket, key, s3) = with_session(session, |sess| -> Result<_> {
+                let bucket = sess.selected_bucket()?.to_owned();
+                let key = sess.resolve_remote(&remote)?;
+                Ok((bucket, key, sess.selected_s3()?.clone()))
+            })??;
+            runtime.block_on(s3.create_dir(&bucket, &key))?;
+            Ok(false)
+        }
+        "rm" => {
+            if parts.len() < 2 {
+                bail!("usage: rm <profile>:/path | rm -r <profile>:/path");
+            }
+            let recursive = parts.get(1).is_some_and(|arg| arg == "-r");
+            let remote_index = if recursive { 2 } else { 1 };
+            let remote_spec = parts
+                .get(remote_index)
+                .ok_or_else(|| anyhow!("usage: rm <profile>:/path | rm -r <profile>:/path"))?;
+            let (profile, remote) = parse_remote_target(remote_spec)?;
+            attach_profile_for_command(runtime, session, &profile)?;
+            let (bucket, key, s3) = with_session(session, |sess| -> Result<_> {
+                let bucket = sess.selected_bucket()?.to_owned();
+                let key = sess.resolve_remote(&remote)?;
+                Ok((bucket, key, sess.selected_s3()?.clone()))
+            })??;
+            if recursive {
+                let deleted = runtime.block_on(s3.delete_prefix_recursive(&bucket, &key))?;
+                println!("deleted {deleted} object(s)");
+            } else {
+                runtime.block_on(s3.delete_object(&bucket, &key))?;
+            }
+            Ok(false)
+        }
+        "pwd" => bail!("`pwd` is only available in the interactive shell"),
+        "cd" => bail!("`cd` is only available in the interactive shell"),
+        "exit" => bail!("`exit` is only available in the interactive shell"),
+        other => bail!("unknown command `{other}`"),
+    }
+}
+
+fn print_help() {
     println!("ls [path]");
     println!("cd [path]");
     println!("pwd");
@@ -279,6 +348,61 @@ fn print_help(profile_attached: bool) {
     println!("!<command>");
     println!("Ctrl-D");
     println!("exit");
+}
+
+fn print_noninteractive_help() {
+    println!("ls [<profile>[:/path]]");
+    println!("mkdir <profile>:/path");
+    println!("put <local> <profile>:/path");
+    println!("get <profile>:/path [local]");
+    println!("rm <profile>:/path");
+    println!("rm -r <profile>:/path");
+    println!("!<local command>");
+}
+
+fn attach_profile_for_command(
+    runtime: &Arc<Runtime>,
+    session: &Arc<Mutex<Session>>,
+    profile_name: &str,
+) -> Result<()> {
+    let profile = with_session(session, |sess| sess.profile_config(profile_name).cloned())??;
+    let s3 = runtime.block_on(S3Backend::connect(&profile))?;
+    with_session_mut(session, |sess| {
+        sess.attach_profile(profile_name.to_owned(), profile.bucket.clone(), s3)
+    })?;
+    Ok(())
+}
+
+fn parse_ls_target(input: &str) -> Result<(String, Option<String>)> {
+    if let Some((profile, remote)) = input.split_once(':') {
+        if profile.is_empty() {
+            bail!("invalid profile reference `{input}`");
+        }
+        let remote = normalize_remote_spec(remote);
+        return Ok((profile.to_owned(), remote));
+    }
+    Ok((input.to_owned(), None))
+}
+
+fn parse_remote_target(input: &str) -> Result<(String, String)> {
+    let (profile, remote) = input
+        .split_once(':')
+        .ok_or_else(|| anyhow!("expected remote target like `<profile>:/path`"))?;
+    if profile.is_empty() {
+        bail!("invalid profile reference `{input}`");
+    }
+    let remote =
+        normalize_remote_spec(remote).ok_or_else(|| anyhow!("missing remote path in `{input}`"))?;
+    Ok((profile.to_owned(), remote))
+}
+
+fn normalize_remote_spec(remote: &str) -> Option<String> {
+    let trimmed = remote.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
 }
 
 fn run_local_shell(command: &str) -> Result<()> {
@@ -392,16 +516,8 @@ impl Completer for ReplHelper {
             if current.is_empty() {
                 return Ok((line.len(), Vec::new()));
             }
-            let profile_attached =
-                with_session(&self.session, |sess| sess.current_profile().is_some())
-                    .map_err(to_readline_error)?;
-            let command_names: &[&str] = if !profile_attached {
-                &["help", "ls", "attach", "exit"]
-            } else {
-                &[
-                    "help", "pwd", "ls", "attach", "cd", "put", "get", "rm", "mkdir", "exit",
-                ]
-            };
+            let command_names: &[&str] =
+                &["help", "pwd", "ls", "cd", "put", "get", "rm", "mkdir", "exit"];
             let pairs = command_names
                 .iter()
                 .filter(|name| name.starts_with(current))
@@ -416,7 +532,6 @@ impl Completer for ReplHelper {
         let cmd = parts.first().map(String::as_str).unwrap_or("");
         let base_start = line.len() - current.len();
         let (start, pairs) = match cmd {
-            "attach" if argc == 2 => self.complete_profiles(current),
             "cd" | "mkdir" => self.complete_remote(current, true),
             "ls" | "get" | "rm" => self.complete_remote(current, false),
             "put" if argc == 2 => complete_local_path(current).map(|(start, values)| {
@@ -439,38 +554,16 @@ impl Completer for ReplHelper {
 }
 
 impl ReplHelper {
-    fn complete_profiles(&self, current: &str) -> rustyline::Result<(usize, Vec<Pair>)> {
-        let profiles =
-            with_session(&self.session, |sess| sess.list_profiles()).map_err(to_readline_error)?;
-        let pairs = profiles
-            .into_iter()
-            .filter(|profile| profile.starts_with(current))
-            .map(|profile| Pair {
-                display: profile.clone(),
-                replacement: profile,
-            })
-            .collect();
-        Ok((0, pairs))
-    }
-
     fn complete_remote(
         &self,
         current: &str,
         dirs_only: bool,
     ) -> rustyline::Result<(usize, Vec<Pair>)> {
         let snapshot = with_session(&self.session, |sess| {
-            (
-                sess.cwd.clone(),
-                sess.current_profile().is_some(),
-                sess.current_bucket().map(ToOwned::to_owned),
-                sess.s3.clone(),
-            )
+            (sess.cwd.clone(), sess.current_bucket().map(ToOwned::to_owned), sess.s3.clone())
         })
         .map_err(to_readline_error)?;
-        let (cwd, profile_attached, bucket, s3) = snapshot;
-        if !profile_attached {
-            return Ok((current.len(), Vec::new()));
-        }
+        let (cwd, bucket, s3) = snapshot;
         let Some(bucket) = bucket else {
             return Ok((current.len(), Vec::new()));
         };

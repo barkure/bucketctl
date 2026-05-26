@@ -45,13 +45,13 @@ impl Session {
     pub fn selected_s3(&self) -> Result<&S3Backend> {
         self.s3
             .as_ref()
-            .ok_or_else(|| anyhow!("no profile attached; use `ls` or `attach <profile>` first"))
+            .ok_or_else(|| anyhow!("no profile attached"))
     }
 
     pub fn selected_bucket(&self) -> Result<&str> {
         self.bucket
             .as_deref()
-            .ok_or_else(|| anyhow!("no profile attached; use `ls` or `attach <profile>` first"))
+            .ok_or_else(|| anyhow!("no profile attached"))
     }
 
     pub fn attach_profile(&mut self, profile_name: String, bucket: String, s3: S3Backend) {
@@ -61,19 +61,8 @@ impl Session {
         self.cwd.clear();
     }
 
-    pub fn clear_profile(&mut self) {
-        self.profile_name = None;
-        self.s3 = None;
-        self.bucket = None;
-        self.cwd.clear();
-    }
-
     pub fn current_bucket(&self) -> Option<&str> {
         self.bucket.as_deref()
-    }
-
-    pub fn current_profile(&self) -> Option<&str> {
-        self.profile_name.as_deref()
     }
 
     pub fn list_profiles(&self) -> Vec<String> {
@@ -140,10 +129,6 @@ impl Session {
             (Some(profile), Some(_bucket)) => format!("{profile}:{}", self.cwd_display()),
             (Some(profile), None) => format!("{profile}:/"),
         }
-    }
-
-    pub fn in_bucket_root(&self) -> bool {
-        self.bucket.is_some() && self.cwd.is_empty()
     }
 }
 
