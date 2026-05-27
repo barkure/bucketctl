@@ -232,14 +232,25 @@ pub(crate) fn run_noninteractive_command_line(
                     }
                 }
             } else {
-                let profiles = with_session(session, |sess| sess.list_profiles())?;
-                if !profiles.is_empty() {
-                    let rendered = profiles
-                        .into_iter()
-                        .map(|profile| ui::stdout_profile(&profile))
-                        .collect::<Vec<_>>()
-                        .join("  ");
-                    println!("{rendered}");
+                if let Some(default) =
+                    with_session(session, |sess| sess.default_profile_name().map(ToOwned::to_owned))?
+                {
+                    attach_profile_for_command(runtime, session, &default)?;
+                    let bucket =
+                        with_session(session, |sess| sess.selected_bucket().map(ToOwned::to_owned))??;
+                    let s3 = with_session(session, |sess| sess.selected_s3().cloned())??;
+                    let prefix = with_session(session, |sess| sess.resolve_remote("."))??;
+                    list_and_print(runtime, &s3, &bucket, &prefix)?;
+                } else {
+                    let profiles = with_session(session, |sess| sess.list_profiles())?;
+                    if !profiles.is_empty() {
+                        let rendered = profiles
+                            .into_iter()
+                            .map(|profile| ui::stdout_profile(&profile))
+                            .collect::<Vec<_>>()
+                            .join("  ");
+                        println!("{rendered}");
+                    }
                 }
             }
             Ok(false)

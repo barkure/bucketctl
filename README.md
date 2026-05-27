@@ -70,13 +70,22 @@ $ bucketctl
 bitiful  cloudflare-r2
 ```
 
+`bucketctl ls` lists the default bucket:
+
+```bash
+$ bucketctl ls
+       DIR                test/
+      22 B  May 27 17:10  hello.txt
+  48.9 MiB  May 27 16:56  vlc-3.0.23-arm64.dmg
+```
+
 ### Command Mode
 
 Operate on the **default bucket** directly:
 
 ```bash
-bucketctl ls /                  # list root of the default bucket
-bucketctl ls /path/to/dir       # list a subdirectory
+bucketctl ls                      # list default bucket root
+bucketctl ls /path/to/dir         # list a subdirectory
 bucketctl put ~/a.txt /path     # upload
 bucketctl get /file ./          # download
 bucketctl mkdir /new-dir        # create directory
@@ -95,7 +104,8 @@ bucketctl get cloudflare-r2:/file ./    # download
 
 | Command | Default bucket | Specific bucket |
 |---------|---------------|-----------------|
-| List objects | `bucketctl ls /path` | `bucketctl ls <profile>:/path` |
+| List root | `bucketctl ls` | `bucketctl ls <profile>` |
+| List path | `bucketctl ls /path` | `bucketctl ls <profile>:/path` |
 | Upload | `bucketctl put ./a.txt /path` | `bucketctl put ./a.txt <profile>:/path` |
 | Download | `bucketctl get /file ./` | `bucketctl get <profile>:/file ./` |
 | Create dir | `bucketctl mkdir /dir` | `bucketctl mkdir <profile>:/dir` |

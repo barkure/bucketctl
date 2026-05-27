@@ -70,13 +70,22 @@ $ bucketctl
 bitiful  cloudflare-r2
 ```
 
+`bucketctl ls` 列出默认桶内容：
+
+```bash
+$ bucketctl ls
+       DIR                test/
+      22 B  May 27 17:10  hello.txt
+  48.9 MiB  May 27 16:56  vlc-3.0.23-arm64.dmg
+```
+
 ### 命令模式
 
 直接操作**默认桶**：
 
 ```bash
-bucketctl ls /                  # 列出默认桶根目录
-bucketctl ls /path/to/dir       # 列出子目录
+bucketctl ls                      # 列出默认桶根目录
+bucketctl ls /path/to/dir         # 列出子目录
 bucketctl put ~/a.txt /path     # 上传
 bucketctl get /file ./          # 下载
 bucketctl mkdir /new-dir        # 创建目录
@@ -95,7 +104,8 @@ bucketctl get cloudflare-r2:/file ./    # 下载
 
 | 命令 | 默认桶 | 指定桶 |
 |------|-------|-------|
-| 列出对象 | `bucketctl ls /path` | `bucketctl ls <profile>:/path` |
+| 列出根目录 | `bucketctl ls` | `bucketctl ls <profile>` |
+| 列出路径 | `bucketctl ls /path` | `bucketctl ls <profile>:/path` |
 | 上传 | `bucketctl put ./a.txt /path` | `bucketctl put ./a.txt <profile>:/path` |
 | 下载 | `bucketctl get /file ./` | `bucketctl get <profile>:/file ./` |
 | 创建目录 | `bucketctl mkdir /dir` | `bucketctl mkdir <profile>:/dir` |
