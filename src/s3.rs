@@ -1,7 +1,6 @@
 use std::{
     io::{self, ErrorKind},
     path::{Path, PathBuf},
-    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -17,7 +16,7 @@ use chrono::{DateTime, Local, Utc};
 use futures_util::TryStreamExt;
 use http_body::Frame;
 use http_body_util::StreamBody;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::ProgressBar;
 use tokio::{
     fs::{File, OpenOptions},
     io::AsyncWriteExt,
@@ -124,7 +123,7 @@ impl S3Backend {
             .await
             .with_context(|| format!("failed to read {}", local_path.display()))?;
         eprintln!("{} {} -> {key}", ui::status_uploading(), local_path.display());
-        let progress = transfer_progress_bar(total_bytes)?;
+        let progress = ui::transfer_progress_bar(total_bytes)?;
         let progress_for_stream = progress.clone();
 
         let stream = ReaderStream::with_capacity(file, 256 * 1024).inspect_ok(move |chunk| {
@@ -145,10 +144,10 @@ impl S3Backend {
         tokio::select! {
             result = &mut request => {
                 result?;
-                print_upload_done(&progress, key, local_path, total_bytes, total_bytes)?;
+                ui::print_upload_done(&progress, key, local_path, total_bytes, total_bytes)?;
             }
             _ = signal::ctrl_c() => {
-                print_upload_cancelled(&progress, key, local_path, progress.position(), total_bytes)?;
+                ui::print_upload_cancelled(&progress, key, local_path, progress.position(), total_bytes)?;
                 return Err(io::Error::new(
                     ErrorKind::Interrupted,
                     format!("upload interrupted for `{key}`"),
@@ -222,7 +221,7 @@ impl S3Backend {
                         )
                     })?;
                 let progress = ProgressBar::hidden();
-                print_download_done(&progress, key, local_path, total, Some(total))?;
+                ui::print_download_done(&progress, key, local_path, total, Some(total))?;
                 return Ok(());
             }
         }
@@ -237,12 +236,12 @@ impl S3Backend {
         let mut file = open_download_file(&part_path, resume_from).await?;
         let mut downloaded = resume_from;
         eprintln!("{} {key} -> {}", ui::status_downloading(), local_path.display());
-        let progress = transfer_progress_bar(total_bytes.unwrap_or(resume_from))?;
+        let progress = ui::transfer_progress_bar(total_bytes.unwrap_or(resume_from))?;
         progress.set_position(resume_from);
         loop {
             let chunk = tokio::select! {
                 _ = signal::ctrl_c() => {
-                    print_download_cancelled(&progress, key, local_path, downloaded, total_bytes, &part_path)?;
+                    ui::print_download_cancelled(&progress, key, local_path, downloaded, total_bytes, &part_path)?;
                     return Err(io::Error::new(
                         ErrorKind::Interrupted,
                         format!(
@@ -278,7 +277,7 @@ impl S3Backend {
                     local_path.display()
                 )
             })?;
-        print_download_done(&progress, key, local_path, downloaded, total_bytes)?;
+        ui::print_download_done(&progress, key, local_path, downloaded, total_bytes)?;
         Ok(())
     }
 
@@ -462,113 +461,4 @@ async fn open_download_file(part_path: &Path, resume_from: u64) -> Result<File> 
         .open(part_path)
         .await
         .with_context(|| format!("failed to open {}", part_path.display()))
-}
-
-fn print_download_cancelled(
-    progress: &ProgressBar,
-    key: &str,
-    local_path: &Path,
-    downloaded: u64,
-    total_bytes: Option<u64>,
-    part_path: &Path,
-) -> Result<()> {
-    progress.finish_and_clear();
-    let progress = match total_bytes {
-        Some(total) if total > 0 => format!(
-            "{} / {} {:.1}%",
-            ui::format_bytes(downloaded),
-            ui::format_bytes(total),
-            downloaded as f64 / total as f64 * 100.0
-        ),
-        _ => ui::format_bytes(downloaded),
-    };
-    eprintln!(
-        "{} {key} -> {} [{progress}]",
-        ui::status_cancelled(),
-        local_path.display(),
-    );
-    eprintln!("{:>11} partial saved at {}", "", part_path.display());
-    Ok(())
-}
-
-fn print_download_done(
-    progress: &ProgressBar,
-    key: &str,
-    local_path: &Path,
-    downloaded: u64,
-    total_bytes: Option<u64>,
-) -> Result<()> {
-    progress.finish_and_clear();
-    let progress = match total_bytes {
-        Some(total) if total > 0 => format!(
-            "{} / {} {:.1}%",
-            ui::format_bytes(downloaded),
-            ui::format_bytes(total),
-            downloaded as f64 / total as f64 * 100.0
-        ),
-        _ => ui::format_bytes(downloaded),
-    };
-    eprintln!(
-        "{} {key} -> {} [{progress}]",
-        ui::status_done(),
-        local_path.display()
-    );
-    Ok(())
-}
-
-fn print_upload_done(
-    progress: &ProgressBar,
-    key: &str,
-    local_path: &Path,
-    uploaded: u64,
-    total_bytes: u64,
-) -> Result<()> {
-    progress.finish_and_clear();
-    eprintln!(
-        "{} {} -> {key} [{} / {} {:.1}%]",
-        ui::status_done(),
-        local_path.display(),
-        ui::format_bytes(uploaded),
-        ui::format_bytes(total_bytes),
-        if total_bytes == 0 {
-            100.0
-        } else {
-            uploaded as f64 / total_bytes as f64 * 100.0
-        }
-    );
-    Ok(())
-}
-
-fn print_upload_cancelled(
-    progress: &ProgressBar,
-    key: &str,
-    local_path: &Path,
-    uploaded: u64,
-    total_bytes: u64,
-) -> Result<()> {
-    progress.finish_and_clear();
-    eprintln!(
-        "{} upload {} -> {key} [{} / {} {:.1}%]",
-        ui::status_cancelled(),
-        local_path.display(),
-        ui::format_bytes(uploaded),
-        ui::format_bytes(total_bytes),
-        if total_bytes == 0 {
-            100.0
-        } else {
-            uploaded as f64 / total_bytes as f64 * 100.0
-        }
-    );
-    Ok(())
-}
-
-fn transfer_progress_bar(total_bytes: u64) -> Result<ProgressBar> {
-    let progress = ProgressBar::new(total_bytes);
-    let style = ProgressStyle::with_template(
-        "{spinner:.cyan} [{elapsed_precise}] [{bar:28.cyan/blue}] {bytes:>8}/{total_bytes:8} ({eta})",
-    )?
-    .progress_chars("#>-");
-    progress.set_style(style);
-    progress.enable_steady_tick(Duration::from_millis(120));
-    Ok(progress)
 }

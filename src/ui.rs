@@ -2,9 +2,13 @@ use std::{
     borrow::Cow,
     env,
     io::{self, IsTerminal},
+    path::Path,
+    time::Duration,
 };
 
+use anyhow::Result;
 use human_bytes::human_bytes;
+use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 
 fn colors_enabled(use_stderr: bool) -> bool {
@@ -160,4 +164,113 @@ fn is_archive_name(name: &str) -> bool {
     ]
     .iter()
     .any(|suffix| lower.ends_with(suffix))
+}
+
+pub(crate) fn transfer_progress_bar(total_bytes: u64) -> Result<ProgressBar> {
+    let progress = ProgressBar::new(total_bytes);
+    let style = ProgressStyle::with_template(
+        "{spinner:.cyan} [{elapsed_precise}] [{bar:28.cyan/blue}] {bytes:>8}/{total_bytes:8} ({eta})",
+    )?
+    .progress_chars("#>-");
+    progress.set_style(style);
+    progress.enable_steady_tick(Duration::from_millis(120));
+    Ok(progress)
+}
+
+pub(crate) fn print_download_cancelled(
+    progress: &ProgressBar,
+    key: &str,
+    local_path: &Path,
+    downloaded: u64,
+    total_bytes: Option<u64>,
+    part_path: &Path,
+) -> Result<()> {
+    progress.finish_and_clear();
+    let progress_str = match total_bytes {
+        Some(total) if total > 0 => format!(
+            "{} / {} {:.1}%",
+            format_bytes(downloaded),
+            format_bytes(total),
+            downloaded as f64 / total as f64 * 100.0
+        ),
+        _ => format_bytes(downloaded),
+    };
+    eprintln!(
+        "{} {key} -> {} [{progress_str}]",
+        status_cancelled(),
+        local_path.display(),
+    );
+    eprintln!("{:>11} partial saved at {}", "", part_path.display());
+    Ok(())
+}
+
+pub(crate) fn print_download_done(
+    progress: &ProgressBar,
+    key: &str,
+    local_path: &Path,
+    downloaded: u64,
+    total_bytes: Option<u64>,
+) -> Result<()> {
+    progress.finish_and_clear();
+    let progress_str = match total_bytes {
+        Some(total) if total > 0 => format!(
+            "{} / {} {:.1}%",
+            format_bytes(downloaded),
+            format_bytes(total),
+            downloaded as f64 / total as f64 * 100.0
+        ),
+        _ => format_bytes(downloaded),
+    };
+    eprintln!(
+        "{} {key} -> {} [{progress_str}]",
+        status_done(),
+        local_path.display()
+    );
+    Ok(())
+}
+
+pub(crate) fn print_upload_done(
+    progress: &ProgressBar,
+    key: &str,
+    local_path: &Path,
+    uploaded: u64,
+    total_bytes: u64,
+) -> Result<()> {
+    progress.finish_and_clear();
+    eprintln!(
+        "{} {} -> {key} [{} / {} {:.1}%]",
+        status_done(),
+        local_path.display(),
+        format_bytes(uploaded),
+        format_bytes(total_bytes),
+        if total_bytes == 0 {
+            100.0
+        } else {
+            uploaded as f64 / total_bytes as f64 * 100.0
+        }
+    );
+    Ok(())
+}
+
+pub(crate) fn print_upload_cancelled(
+    progress: &ProgressBar,
+    key: &str,
+    local_path: &Path,
+    uploaded: u64,
+    total_bytes: u64,
+) -> Result<()> {
+    progress.finish_and_clear();
+    eprintln!(
+        "{} upload {} -> {key} [{} / {} {:.1}%]",
+        status_cancelled(),
+        local_path.display(),
+        format_bytes(uploaded),
+        format_bytes(total_bytes),
+        if total_bytes == 0 {
+            100.0
+        } else {
+            uploaded as f64 / total_bytes as f64 * 100.0
+        }
+    );
+    Ok(())
 }

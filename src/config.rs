@@ -7,9 +7,22 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
+#[derive(Debug, Clone, Deserialize)]
+struct ConfigFile {
+    settings: Option<Settings>,
+    #[serde(flatten)]
+    profiles: BTreeMap<String, ProfileConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Settings {
+    default_profile: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub profiles: BTreeMap<String, ProfileConfig>,
+    pub default_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -32,15 +45,36 @@ impl AppConfig {
         };
         let raw = fs::read_to_string(&path)
             .with_context(|| format!("failed to read config file {}", path.display()))?;
-        let profiles: BTreeMap<String, ProfileConfig> = toml::from_str(&raw)
+        let config: ConfigFile = toml::from_str(&raw)
             .with_context(|| format!("failed to parse config file {}", path.display()))?;
-        Ok(Self { profiles })
+
+        let default_profile = config
+            .settings
+            .and_then(|s| s.default_profile)
+            .filter(|name| !name.is_empty());
+
+        if let Some(ref name) = default_profile
+            && !config.profiles.contains_key(name)
+        {
+            bail!(
+                "default_profile `{name}` not found in config profiles"
+            );
+        }
+
+        Ok(Self {
+            profiles: config.profiles,
+            default_profile,
+        })
     }
 
     pub fn profile(&self, name: &str) -> Result<&ProfileConfig> {
         self.profiles
             .get(name)
             .ok_or_else(|| anyhow!("profile `{name}` not found in config"))
+    }
+
+    pub fn default_profile(&self) -> Option<&str> {
+        self.default_profile.as_deref()
     }
 }
 

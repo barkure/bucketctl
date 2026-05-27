@@ -1,4 +1,6 @@
 mod cli;
+mod commands;
+mod completion;
 mod config;
 mod repl;
 mod s3;
@@ -29,6 +31,7 @@ fn main() -> Result<()> {
 
     let config = AppConfig::load(cli.config.as_deref())?;
     let profiles = config.profiles.clone().into_iter().collect();
+    let default_profile = config.default_profile().map(ToOwned::to_owned);
     let args = cli.args;
 
     let runtime = Arc::new(
@@ -37,16 +40,43 @@ fn main() -> Result<()> {
             .build()?,
     );
 
-    let session = Session::new(profiles);
+    let session = Session::new(profiles, default_profile);
     let session = Arc::new(Mutex::new(session));
 
     if args.is_empty() {
-        repl::run_noninteractive_command_line(&runtime, &session, "ls")?;
-        Ok(())
-    } else if looks_like_command(&args[0]) {
+        let profiles = {
+            let guard = session
+                .lock()
+                .map_err(|_| anyhow::anyhow!("session lock poisoned"))?;
+            guard.list_profiles()
+        };
+        if !profiles.is_empty() {
+            let rendered = profiles
+                .into_iter()
+                .map(|p| ui::stdout_profile(&p))
+                .collect::<Vec<_>>()
+                .join("  ");
+            println!("{rendered}");
+        }
+        return Ok(());
+    }
+
+    if looks_like_command(&args[0]) {
+        if let Some(profile_name) = config.default_profile() {
+            let profile = config.profile(profile_name)?.clone();
+            let s3 = runtime.block_on(S3Backend::connect(&profile))?;
+            {
+                let mut guard = session
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("session lock poisoned"))?;
+                guard.attach_profile(profile_name.to_owned(), profile.bucket.clone(), s3);
+            }
+        }
         repl::run_noninteractive_command_line(&runtime, &session, &args.join(" "))?;
-        Ok(())
-    } else if args.len() == 1 {
+        return Ok(());
+    }
+
+    if args.len() == 1 {
         let profile_name = args[0].clone();
         let profile = config.profile(&profile_name)?.clone();
         let s3 = runtime.block_on(S3Backend::connect(&profile))?;

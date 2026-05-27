@@ -10,6 +10,7 @@ use crate::{config::ProfileConfig, s3::S3Backend};
 #[derive(Clone)]
 pub struct Session {
     pub profiles: BTreeMap<String, ProfileConfig>,
+    pub default_profile: Option<String>,
     pub profile_name: Option<String>,
     pub s3: Option<S3Backend>,
     pub bucket: Option<String>,
@@ -17,9 +18,10 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(profiles: BTreeMap<String, ProfileConfig>) -> Self {
+    pub fn new(profiles: BTreeMap<String, ProfileConfig>, default_profile: Option<String>) -> Self {
         Self {
             profiles,
+            default_profile,
             profile_name: None,
             s3: None,
             bucket: None,
@@ -73,6 +75,14 @@ impl Session {
         self.profiles
             .get(name)
             .ok_or_else(|| anyhow!("profile `{name}` not found in config"))
+    }
+
+    pub fn has_profile(&self, name: &str) -> bool {
+        self.profiles.contains_key(name)
+    }
+
+    pub fn default_profile_name(&self) -> Option<&str> {
+        self.default_profile.as_deref()
     }
 
     pub fn resolve_remote(&self, input: &str) -> Result<String> {
@@ -151,9 +161,7 @@ pub fn resolve_remote_path(cwd: &str, input: &str) -> Result<String> {
     } else {
         cwd.trim_end_matches('/').to_owned()
     };
-    let candidate = if input.starts_with('/') {
-        input.to_owned()
-    } else if base.is_empty() {
+    let candidate = if input.starts_with('/') || base.is_empty() {
         input.to_owned()
     } else if input.is_empty() {
         format!("/{base}")
