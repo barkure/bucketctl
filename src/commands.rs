@@ -250,19 +250,33 @@ pub(crate) fn run_noninteractive_command_line(
             }
             let local = PathBuf::from(expand_tilde(&parts[1]));
             if let Some(target) = parts.get(2) {
-                let (profile, remote) = parse_remote_target(target)?;
-                attach_profile_for_command(runtime, session, &profile)?;
-                let (bucket, s3) = with_session(session, |sess| -> Result<_> {
-                    let bucket = sess.selected_bucket()?.to_owned();
-                    Ok((bucket, sess.selected_s3()?.clone()))
-                })??;
-                let key =
-                    if !remote.ends_with('/') && runtime.block_on(s3.remote_dir_exists(&bucket, &remote))? {
-                        with_session(session, |sess| sess.resolve_upload_target_in_dir(&local, &remote))??
-                    } else {
-                        with_session(session, |sess| sess.resolve_upload_target(&local, Some(&remote)))??
-                    };
-                runtime.block_on(s3.put_file(&bucket, &key, &local))?;
+                if target.contains(':') {
+                    let (profile, remote) = parse_remote_target(target)?;
+                    attach_profile_for_command(runtime, session, &profile)?;
+                    let (bucket, s3) = with_session(session, |sess| -> Result<_> {
+                        let bucket = sess.selected_bucket()?.to_owned();
+                        Ok((bucket, sess.selected_s3()?.clone()))
+                    })??;
+                    let key =
+                        if !remote.ends_with('/') && runtime.block_on(s3.remote_dir_exists(&bucket, &remote))? {
+                            with_session(session, |sess| sess.resolve_upload_target_in_dir(&local, &remote))??
+                        } else {
+                            with_session(session, |sess| sess.resolve_upload_target(&local, Some(&remote)))??
+                        };
+                    runtime.block_on(s3.put_file(&bucket, &key, &local))?;
+                } else {
+                    let (bucket, s3) = with_session(session, |sess| -> Result<_> {
+                        let bucket = sess.selected_bucket()?.to_owned();
+                        Ok((bucket, sess.selected_s3()?.clone()))
+                    })??;
+                    let key =
+                        if !target.ends_with('/') && runtime.block_on(s3.remote_dir_exists(&bucket, target))? {
+                            with_session(session, |sess| sess.resolve_upload_target_in_dir(&local, target))??
+                        } else {
+                            with_session(session, |sess| sess.resolve_upload_target(&local, Some(target)))??
+                        };
+                    runtime.block_on(s3.put_file(&bucket, &key, &local))?;
+                }
             } else {
                 let (bucket, s3) = with_session(session, |sess| -> Result<_> {
                     let bucket = sess.selected_bucket()?.to_owned();
