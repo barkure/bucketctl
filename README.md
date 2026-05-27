@@ -86,11 +86,11 @@ Operate on the **default bucket** directly:
 ```bash
 bucketctl ls                      # list default bucket root
 bucketctl ls /path/to/dir         # list a subdirectory
-bucketctl put ~/a.txt /path     # upload
-bucketctl get /file ./          # download
-bucketctl mkdir /new-dir        # create directory
-bucketctl rm /file              # delete file
-bucketctl rm -r /dir            # delete directory recursively
+bucketctl put ~/a.txt /path       # upload
+bucketctl get /file ./            # download
+bucketctl mkdir /new-dir          # create directory
+bucketctl rm /file                # delete file
+bucketctl rm -r /dir              # delete directory recursively
 ```
 
 Target a **specific bucket** with `<profile>:` prefix or just the profile name (for `ls`):

@@ -86,11 +86,11 @@ $ bucketctl ls
 ```bash
 bucketctl ls                      # 列出默认桶根目录
 bucketctl ls /path/to/dir         # 列出子目录
-bucketctl put ~/a.txt /path     # 上传
-bucketctl get /file ./          # 下载
-bucketctl mkdir /new-dir        # 创建目录
-bucketctl rm /file              # 删除文件
-bucketctl rm -r /dir            # 递归删除目录
+bucketctl put ~/a.txt /path       # 上传
+bucketctl get /file ./            # 下载
+bucketctl mkdir /new-dir          # 创建目录
+bucketctl rm /file                # 删除文件
+bucketctl rm -r /dir              # 递归删除目录
 ```
 
 操作**指定桶**，加上 `<profile>:` 前缀或直写 profile 名（`ls` 支持）：
