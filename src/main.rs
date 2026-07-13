@@ -1,15 +1,19 @@
 mod cli;
+mod command;
 mod commands;
 mod completion;
 mod config;
+mod dispatch;
+mod paths;
 mod repl;
 mod s3;
 mod session;
+mod shell_complete;
 mod ui;
 
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser};
 use cli::Cli;
 use config::AppConfig;
@@ -29,10 +33,20 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    let args = cli.args;
+    if let Some(shell) = args.first().map(String::as_str) {
+        if shell == "completion" {
+            let profiles = config::load_profiles_optional(cli.config.as_deref())?;
+            return shell_complete::emit(args.get(1).map(String::as_str).unwrap_or(""), &profiles);
+        }
+        if shell == "config" {
+            return handle_config_subcommand(&args[1..], cli.config.as_deref());
+        }
+    }
+
     let config = AppConfig::load(cli.config.as_deref())?;
     let profiles = config.profiles.clone().into_iter().collect();
     let default_profile = config.default_profile().map(ToOwned::to_owned);
-    let args = cli.args;
 
     let runtime = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
@@ -61,7 +75,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    if looks_like_command(&args[0]) {
+    if dispatch::is_command_token(&args[0]) {
         if let Some(profile_name) = config.default_profile() {
             let profile = config.profile(profile_name)?.clone();
             let s3 = runtime.block_on(S3Backend::connect(&profile))?;
@@ -72,7 +86,7 @@ fn main() -> Result<()> {
                 guard.attach_profile(profile_name.to_owned(), profile.bucket.clone(), s3);
             }
         }
-        repl::run_noninteractive_command_line(&runtime, &session, &args.join(" "))?;
+        repl::run_noninteractive_command_line(&runtime, &session, &args)?;
         return Ok(());
     }
 
@@ -88,15 +102,20 @@ fn main() -> Result<()> {
         }
         run_repl(runtime, session)
     } else {
-        anyhow::bail!(
-            "non-interactive mode uses command-first syntax, for example `bucketctl ls mybucket`"
-        )
+        bail!("non-interactive mode uses command-first syntax, for example `bucketctl ls mybucket`")
     }
 }
 
-fn looks_like_command(token: &str) -> bool {
-    matches!(
-        token,
-        "help" | "ls" | "mkdir" | "put" | "get" | "rm"
-    ) || token.starts_with('!')
+fn handle_config_subcommand(
+    args: &[String],
+    override_path: Option<&std::path::Path>,
+) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("init") => {
+            let force = args.iter().any(|arg| arg == "--force");
+            config::init_config(override_path, force)
+        }
+        Some(other) => bail!("unknown config subcommand `{other}`; try `bucketctl config init`"),
+        None => bail!("usage: bucketctl config init [--force]"),
+    }
 }

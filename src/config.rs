@@ -1,8 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    env, fs,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, env, fs, path::Path};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
@@ -40,7 +36,7 @@ impl AppConfig {
     pub fn load(override_path: Option<&Path>) -> Result<Self> {
         let path = match override_path {
             Some(path) => path.to_path_buf(),
-            None => default_config_path()
+            None => crate::paths::default_config_path()
                 .ok_or_else(|| anyhow!("could not determine config path"))?,
         };
         let raw = fs::read_to_string(&path)
@@ -56,9 +52,7 @@ impl AppConfig {
         if let Some(ref name) = default_profile
             && !config.profiles.contains_key(name)
         {
-            bail!(
-                "default_profile `{name}` not found in config profiles"
-            );
+            bail!("default_profile `{name}` not found in config profiles");
         }
 
         Ok(Self {
@@ -88,11 +82,56 @@ impl ProfileConfig {
     }
 }
 
-fn default_config_path() -> Option<PathBuf> {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".config").join("bucketctl").join("config.toml"))
+pub fn init_config(override_path: Option<&Path>, force: bool) -> Result<()> {
+    let path = match override_path {
+        Some(path) => path.to_path_buf(),
+        None => crate::paths::default_config_path()
+            .ok_or_else(|| anyhow!("could not determine config path"))?,
+    };
+
+    if path.exists() && !force {
+        bail!(
+            "config file already exists at {}; use --force to overwrite",
+            path.display()
+        );
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    fs::write(&path, CONFIG_TEMPLATE)
+        .with_context(|| format!("failed to write config template to {}", path.display()))?;
+    println!("wrote {}", path.display());
+    Ok(())
 }
+
+pub fn load_profiles_optional(override_path: Option<&Path>) -> Result<Vec<String>> {
+    match AppConfig::load(override_path) {
+        Ok(config) => Ok(config.profiles.keys().cloned().collect()),
+        Err(err) => {
+            let message = err.to_string();
+            if message.contains("failed to read config file") {
+                Ok(Vec::new())
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
+const CONFIG_TEMPLATE: &str = r#"[settings]
+# default_profile = "myprofile"
+
+[myprofile]
+bucket = "my-bucket"
+endpoint = "https://s3.example.com"
+region = "auto"
+access_key = "env:ACCESS_KEY"
+secret_key = "env:SECRET_KEY"
+path_style = false
+"#;
 
 fn resolve_secret(value: &str, field: &str) -> Result<String> {
     if let Some(name) = value.strip_prefix("env:") {

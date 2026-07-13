@@ -12,8 +12,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 
 fn colors_enabled(use_stderr: bool) -> bool {
-    if env::var_os("NO_COLOR").is_some()
-        || matches!(env::var("TERM").ok().as_deref(), Some("dumb"))
+    if env::var_os("NO_COLOR").is_some() || matches!(env::var("TERM").ok().as_deref(), Some("dumb"))
     {
         return false;
     }
@@ -36,7 +35,12 @@ pub fn colorize_prompt<'a>(prompt: &'a str) -> Cow<'a, str> {
 
     if let Some(prefix) = prompt.strip_suffix("> ") {
         if let Some((profile, path)) = prefix.split_once(':') {
-            return Cow::Owned(format!("{}:{}{}", profile.cyan(), path.blue(), "> ".dimmed()));
+            return Cow::Owned(format!(
+                "{}:{}{}",
+                profile.cyan(),
+                path.blue(),
+                "> ".dimmed()
+            ));
         }
         return Cow::Owned(format!("{}{}", prefix.cyan(), "> ".dimmed()));
     }
@@ -46,20 +50,12 @@ pub fn colorize_prompt<'a>(prompt: &'a str) -> Cow<'a, str> {
 
 fn status_label(text: &str, color_enabled: bool, colored: String) -> String {
     let plain = format!("{text:>11}");
-    if color_enabled {
-        colored
-    } else {
-        plain
-    }
+    if color_enabled { colored } else { plain }
 }
 
 pub fn status_done() -> String {
     if colors_enabled(true) {
-        status_label(
-            "Done",
-            true,
-            format!("{:>11}", "Done".green().bold()),
-        )
+        status_label("Done", true, format!("{:>11}", "Done".green().bold()))
     } else {
         status_label("Done", false, String::new())
     }

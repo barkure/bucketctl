@@ -98,8 +98,9 @@ impl Completer for ReplHelper {
             if current.is_empty() {
                 return Ok((line.len(), Vec::new()));
             }
-            let command_names: &[&str] =
-                &["help", "pwd", "ls", "cd", "put", "get", "rm", "mkdir", "exit"];
+            let command_names: &[&str] = &[
+                "help", "pwd", "ls", "cd", "put", "get", "rm", "mkdir", "exit",
+            ];
             let pairs = command_names
                 .iter()
                 .filter(|name| name.starts_with(current))
@@ -142,7 +143,11 @@ impl ReplHelper {
         dirs_only: bool,
     ) -> rustyline::Result<(usize, Vec<Pair>)> {
         let snapshot = commands::with_session(&self.session, |sess| {
-            (sess.cwd.clone(), sess.current_bucket().map(ToOwned::to_owned), sess.s3.clone())
+            (
+                sess.cwd.clone(),
+                sess.current_bucket().map(ToOwned::to_owned),
+                sess.s3.clone(),
+            )
         })
         .map_err(to_readline_error)?;
         let (cwd, bucket, s3) = snapshot;
@@ -158,7 +163,7 @@ impl ReplHelper {
 
         let entries = self
             .runtime
-            .block_on(s3.list_prefix(&bucket, &resolved_parent))
+            .block_on(s3.list_for_completion(&bucket, &resolved_parent, &needle, 2))
             .map_err(to_readline_error)?;
         let start = current.len() - needle.len();
         let pairs = entries
@@ -207,7 +212,7 @@ pub(crate) fn complete_local_path(current: &str) -> rustyline::Result<(usize, Ve
     Ok((current.len() - base.len(), entries))
 }
 
-fn split_local_completion(current: &str) -> (PathBuf, String) {
+pub(crate) fn split_local_completion(current: &str) -> (PathBuf, String) {
     if current.ends_with('/') {
         let dir = PathBuf::from(current.trim_end_matches('/'));
         return (dir, String::new());
@@ -215,15 +220,14 @@ fn split_local_completion(current: &str) -> (PathBuf, String) {
 
     let path = Path::new(current);
     match (path.parent(), path.file_name()) {
-        (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => (
-            parent.to_path_buf(),
-            name.to_string_lossy().into_owned(),
-        ),
+        (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => {
+            (parent.to_path_buf(), name.to_string_lossy().into_owned())
+        }
         _ => (PathBuf::from("."), current.to_owned()),
     }
 }
 
-fn split_remote_completion(current: &str) -> (String, String, String) {
+pub(crate) fn split_remote_completion(current: &str) -> (String, String, String) {
     match current.rsplit_once('/') {
         Some((parent, needle)) => {
             let base = if current.starts_with('/') && parent.is_empty() {
@@ -239,4 +243,40 @@ fn split_remote_completion(current: &str) -> (String, String, String) {
 
 fn to_readline_error(err: anyhow::Error) -> ReadlineError {
     ReadlineError::Io(io::Error::other(err.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_remote_completion_parses_parent_and_needle() {
+        let (parent, needle, base) = split_remote_completion("photos/ca");
+        assert_eq!(parent, "photos");
+        assert_eq!(needle, "ca");
+        assert_eq!(base, "photos/");
+    }
+
+    #[test]
+    fn split_remote_completion_root_absolute() {
+        let (parent, needle, base) = split_remote_completion("/foo");
+        assert_eq!(parent, "");
+        assert_eq!(needle, "foo");
+        assert_eq!(base, "/");
+    }
+
+    #[test]
+    fn split_remote_completion_bare_needle() {
+        let (parent, needle, base) = split_remote_completion("z");
+        assert_eq!(parent, "");
+        assert_eq!(needle, "z");
+        assert_eq!(base, "");
+    }
+
+    #[test]
+    fn split_local_completion_splits_dir_and_base() {
+        let (dir, base) = split_local_completion("./my file");
+        assert_eq!(dir, PathBuf::from("."));
+        assert_eq!(base, "my file");
+    }
 }

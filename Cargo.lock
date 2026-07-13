@@ -494,11 +494,12 @@ dependencies = [
 
 [[package]]
 name = "bucketctl"
-version = "26.5.27-r3"
+version = "26.7.13-r1"
 dependencies = [
  "anyhow",
  "aws-credential-types",
  "aws-sdk-s3",
+ "aws-smithy-runtime-api",
  "aws-smithy-types",
  "chrono",
  "clap",

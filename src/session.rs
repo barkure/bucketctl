@@ -1,9 +1,12 @@
 use std::{
     collections::BTreeMap,
+    env,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 use anyhow::{Result, anyhow, bail};
+use tokio::runtime::Runtime;
 
 use crate::{config::ProfileConfig, s3::S3Backend};
 
@@ -109,7 +112,11 @@ impl Session {
             .file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(|| anyhow!("local path must point to a file name"))?;
-        self.resolve_remote(&format!("{}/{}", remote_dir.trim_end_matches('/'), file_name))
+        self.resolve_remote(&format!(
+            "{}/{}",
+            remote_dir.trim_end_matches('/'),
+            file_name
+        ))
     }
 
     pub fn resolve_download_target(remote: &str, local: Option<&str>) -> Result<PathBuf> {
@@ -119,7 +126,7 @@ impl Session {
             .ok_or_else(|| anyhow!("remote path must point to an object"))?;
 
         if let Some(local) = local {
-            let local_path = PathBuf::from(local);
+            let local_path = PathBuf::from(expand_tilde(local));
             if local_path.is_dir() {
                 return Ok(local_path.join(file_name));
             }
@@ -183,4 +190,103 @@ pub fn resolve_remote_path(cwd: &str, input: &str) -> Result<String> {
     }
 
     Ok(parts.join("/"))
+}
+
+pub fn expand_tilde(path: &str) -> String {
+    if path.starts_with('~')
+        && let Ok(home) = env::var("HOME")
+    {
+        if path == "~" {
+            return home;
+        }
+        if let Some(rest) = path.strip_prefix("~/") {
+            return format!("{home}/{rest}");
+        }
+    }
+    path.to_owned()
+}
+
+pub fn with_session<T>(session: &Arc<Mutex<Session>>, f: impl FnOnce(&Session) -> T) -> Result<T> {
+    let guard = session
+        .lock()
+        .map_err(|_| anyhow!("session lock poisoned"))?;
+    Ok(f(&guard))
+}
+
+pub fn with_session_mut<T>(
+    session: &Arc<Mutex<Session>>,
+    f: impl FnOnce(&mut Session) -> T,
+) -> Result<T> {
+    let mut guard = session
+        .lock()
+        .map_err(|_| anyhow!("session lock poisoned"))?;
+    Ok(f(&mut guard))
+}
+
+pub fn attach_profile_for_command(
+    runtime: &Arc<Runtime>,
+    session: &Arc<Mutex<Session>>,
+    profile_name: &str,
+) -> Result<()> {
+    let profile = with_session(session, |sess| sess.profile_config(profile_name).cloned())??;
+    let s3 = runtime.block_on(S3Backend::connect(&profile))?;
+    with_session_mut(session, |sess| {
+        sess.attach_profile(profile_name.to_owned(), profile.bucket.clone(), s3)
+    })?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_remote_path_absolute_and_relative() {
+        assert_eq!(resolve_remote_path("", "foo").unwrap(), "foo");
+        assert_eq!(resolve_remote_path("a/b/", "c").unwrap(), "a/b/c");
+        assert_eq!(resolve_remote_path("a", "/x").unwrap(), "x");
+        assert_eq!(resolve_remote_path("a/b", "..").unwrap(), "a");
+        assert_eq!(resolve_remote_path("", ".").unwrap(), "");
+    }
+
+    #[test]
+    fn resolve_remote_path_rejects_escape() {
+        assert!(resolve_remote_path("", "..").is_err());
+    }
+
+    #[test]
+    fn expand_tilde_home_and_prefix() {
+        let home = env::var("HOME").expect("HOME");
+        assert_eq!(expand_tilde("~"), home);
+        assert_eq!(expand_tilde("~/Downloads"), format!("{home}/Downloads"));
+        assert_eq!(expand_tilde("/tmp/x"), "/tmp/x");
+    }
+
+    #[test]
+    fn resolve_download_target_expands_tilde() {
+        let home = env::var("HOME").expect("HOME");
+        let target = Session::resolve_download_target("path/file.txt", Some("~/out")).unwrap();
+        assert_eq!(target, PathBuf::from(format!("{home}/out")));
+    }
+
+    #[test]
+    fn resolve_download_target_dir_joins_filename() {
+        let dir = env::temp_dir();
+        let target = Session::resolve_download_target(
+            "remote/obj.txt",
+            Some(dir.as_os_str().to_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(target, dir.join("obj.txt"));
+    }
+
+    #[test]
+    fn resolve_upload_target_defaults_to_basename() {
+        let sess = Session::new(BTreeMap::new(), None);
+        let local = Path::new("/tmp/hello.txt");
+        assert_eq!(
+            sess.resolve_upload_target(local, None).unwrap(),
+            "hello.txt"
+        );
+    }
 }

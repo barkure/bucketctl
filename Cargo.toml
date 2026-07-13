@@ -1,6 +1,6 @@
 [package]
 name = "bucketctl"
-version = "26.5.27-r4"
+version = "26.7.13-r1"
 edition = "2024"
 
 
@@ -14,6 +14,7 @@ panic = "abort"
 anyhow = "1.0"
 aws-credential-types = "1.2"
 aws-sdk-s3 = "1.60"
+aws-smithy-runtime-api = "1.12"
 aws-smithy-types = { version = "1.4", features = ["http-body-1-x"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4.5", features = ["derive"] }
