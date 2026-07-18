@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "bucketctl"
-version = "26.7.13-r1"
+version = "26.7.18-r1"
 dependencies = [
  "anyhow",
  "aws-credential-types",
