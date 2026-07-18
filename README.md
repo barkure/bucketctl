@@ -20,6 +20,12 @@ Override it with `-c <PATH>` or `--config <PATH>`:
 bucketctl -c ./my-config.toml
 ```
 
+Generate a template with `bucketctl init`:
+
+```bash
+bucketctl init
+```
+
 Define multiple profiles — one per bucket:
 
 ```toml
@@ -70,21 +76,21 @@ bash -c "$(curl -fsSL https://github.com/barkure/bucketctl/raw/main/install.sh)"
 
 ## Usage
 
-### List buckets
+### Choose a bucket
+
+Run without arguments to pick a profile interactively:
 
 ```bash
 $ bucketctl
-bitiful  cloudflare-r2
 ```
 
-`bucketctl ls` lists the default bucket:
-
-```bash
-$ bucketctl ls
-       DIR                test/
-      22 B  May 27 17:10  hello.txt
-  48.9 MiB  May 27 16:56  vlc-3.0.23-arm64.dmg
 ```
+select a profile:
+> bitiful
+  cloudflare-r2
+```
+
+Use ↑/↓ to navigate, Enter to confirm — the chosen bucket opens in interactive mode.
 
 ### Command Mode
 
@@ -123,13 +129,7 @@ bucketctl get cloudflare-r2:/file ./    # download
 
 ### Interactive Mode
 
-Enter the REPL for a bucket:
-
-```bash
-bucketctl <profile>
-```
-
-Available commands:
+Once in the REPL (entered via profile picker above), the following commands are available:
 
 | Command | Description |
 |---------|-------------|

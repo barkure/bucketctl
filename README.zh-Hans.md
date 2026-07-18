@@ -20,6 +20,12 @@
 bucketctl -c ./my-config.toml
 ```
 
+用 `bucketctl init` 生成配置模板：
+
+```bash
+bucketctl init
+```
+
 可以定义多个 profile，每个 profile 对应一个桶（bucket）：
 
 ```toml
@@ -69,21 +75,21 @@ bash -c "$(curl -fsSL https://github.com/barkure/bucketctl/raw/main/install.sh)"
 
 ## 使用
 
-### 列出桶
+### 选择桶
+
+不带任何参数启动，交互式选择 profile：
 
 ```bash
 $ bucketctl
-bitiful  cloudflare-r2
 ```
 
-`bucketctl ls` 列出默认桶内容：
-
-```bash
-$ bucketctl ls
-       DIR                test/
-      22 B  May 27 17:10  hello.txt
-  48.9 MiB  May 27 16:56  vlc-3.0.23-arm64.dmg
 ```
+select a profile:
+> bitiful
+  cloudflare-r2
+```
+
+↑/↓ 移动，Enter 确认，所选桶进入交互模式。
 
 ### 命令模式
 
@@ -122,13 +128,7 @@ bucketctl get cloudflare-r2:/file ./    # 下载
 
 ### 交互模式
 
-进入指定桶的 REPL：
-
-```bash
-bucketctl <profile>
-```
-
-可用命令：
+通过上面的选择器进入 REPL 后，可用命令：
 
 | 命令 | 说明 |
 |------|------|
