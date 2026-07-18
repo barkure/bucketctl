@@ -230,7 +230,11 @@ pub(crate) fn split_local_completion(current: &str) -> (PathBuf, String) {
 pub(crate) fn split_remote_completion(current: &str) -> (String, String, String) {
     match current.rsplit_once('/') {
         Some((parent, needle)) => {
-            let base = if current.starts_with('/') && parent.is_empty() {
+            // When the input itself ends with '/', needle is empty and the
+            // full prefix is already on the line — don't prepend it again.
+            let base = if needle.is_empty() {
+                String::new()
+            } else if current.starts_with('/') && parent.is_empty() {
                 "/".to_owned()
             } else {
                 format!("{parent}/")
@@ -270,6 +274,14 @@ mod tests {
         let (parent, needle, base) = split_remote_completion("z");
         assert_eq!(parent, "");
         assert_eq!(needle, "z");
+        assert_eq!(base, "");
+    }
+
+    #[test]
+    fn split_remote_completion_trailing_slash_empty_base() {
+        let (parent, needle, base) = split_remote_completion("public/");
+        assert_eq!(parent, "public");
+        assert_eq!(needle, "");
         assert_eq!(base, "");
     }
 
