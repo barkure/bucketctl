@@ -10,7 +10,7 @@ use anyhow::{Result, anyhow, bail};
 use tokio::runtime::Runtime;
 
 use crate::{
-    s3::S3Backend,
+    s3::{S3Backend, normalize_dir_key},
     session::{Session, attach_profile_for_command, with_session, with_session_mut},
     ui,
 };
@@ -352,6 +352,13 @@ fn execute_rm(
         let deleted = runtime.block_on(s3.delete_keys(&bucket, &keys))?;
         println!("deleted {deleted} object(s)");
     } else {
+        // `rm dir/` targets the directory marker itself; resolve_remote strips
+        // the trailing slash, so restore it here.
+        let key = if remote_path_from_spec(remote).is_some_and(|path| path.ends_with('/')) {
+            normalize_dir_key(&key)
+        } else {
+            key
+        };
         runtime.block_on(s3.delete_object(&bucket, &key))?;
     }
     Ok(ExecOutcome::Continue)

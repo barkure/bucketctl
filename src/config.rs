@@ -109,20 +109,6 @@ pub fn init_config(override_path: Option<&Path>, force: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn load_profiles_optional(override_path: Option<&Path>) -> Result<Vec<String>> {
-    match AppConfig::load(override_path) {
-        Ok(config) => Ok(config.profiles.keys().cloned().collect()),
-        Err(err) => {
-            let message = err.to_string();
-            if message.contains("failed to read config file") {
-                Ok(Vec::new())
-            } else {
-                Err(err)
-            }
-        }
-    }
-}
-
 const CONFIG_TEMPLATE: &str = r#"[settings]
 # default_profile = "myprofile"
 

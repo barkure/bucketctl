@@ -6,11 +6,9 @@ use clap::{ArgAction, Parser};
 #[command(about = "S3 shell with an SFTP-like workflow")]
 #[command(disable_help_flag = true)]
 #[command(disable_version_flag = true)]
+#[command(override_usage = "bucketctl [-c <PATH>]\n       bucketctl [-c <PATH>] <COMMAND> ...")]
 #[command(
-    override_usage = "bucketctl [-c <PATH>] [PROFILE]\n       bucketctl [-c <PATH>] <COMMAND> ..."
-)]
-#[command(
-    help_template = "{about-with-newline}\nUsage: {usage}\n\nOptions:\n{options}\n\nExamples:\n  bucketctl ls\n  bucketctl ls mybucket:/path\n  bucketctl put ./local.txt mybucket:/path\n  bucketctl get mybucket:/path/file ./file\n  bucketctl mybucket\n"
+    help_template = "{about-with-newline}\nUsage: {usage}\n\nOptions:\n{options}\n\nExamples:\n  bucketctl\n  bucketctl init\n  bucketctl ls mybucket:/path\n  bucketctl put ./local.txt mybucket:/path\n  bucketctl get mybucket:/path/file ./file\n"
 )]
 pub struct Cli {
     #[arg(short, long, value_name = "PATH", help = "Use the given config.toml")]

@@ -1,7 +1,7 @@
 pub fn is_command_token(token: &str) -> bool {
     matches!(
         token,
-        "help" | "ls" | "mkdir" | "put" | "get" | "rm" | "completion" | "config"
+        "help" | "ls" | "mkdir" | "put" | "get" | "rm" | "init"
     ) || token.starts_with('!')
 }
 
@@ -12,8 +12,7 @@ mod tests {
     #[test]
     fn recognizes_builtin_commands() {
         assert!(is_command_token("ls"));
-        assert!(is_command_token("completion"));
-        assert!(is_command_token("config"));
+        assert!(is_command_token("init"));
         assert!(is_command_token("!pwd"));
     }
 

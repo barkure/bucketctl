@@ -9,9 +9,9 @@ mod paths;
 mod repl;
 mod s3;
 mod session;
-mod shell_complete;
 mod ui;
 
+use std::io::{self, IsTerminal};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, bail};
@@ -19,9 +19,11 @@ use cdn::CdnBackend;
 use clap::{CommandFactory, Parser};
 use cli::Cli;
 use config::AppConfig;
+use dialoguer::Select;
 use repl::run_repl;
 use s3::S3Backend;
 use session::Session;
+use tokio::runtime::Runtime;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -36,14 +38,12 @@ fn main() -> Result<()> {
     }
 
     let args = cli.args;
-    if let Some(shell) = args.first().map(String::as_str) {
-        if shell == "completion" {
-            let profiles = config::load_profiles_optional(cli.config.as_deref())?;
-            return shell_complete::emit(args.get(1).map(String::as_str).unwrap_or(""), &profiles);
-        }
-        if shell == "config" {
-            return handle_config_subcommand(&args[1..], cli.config.as_deref());
-        }
+
+    if let Some(first) = args.first().map(String::as_str)
+        && first == "init"
+    {
+        let force = args.iter().any(|arg| arg == "--force");
+        return config::init_config(cli.config.as_deref(), force);
     }
 
     let config = AppConfig::load(cli.config.as_deref())?;
@@ -66,15 +66,32 @@ fn main() -> Result<()> {
                 .map_err(|_| anyhow::anyhow!("session lock poisoned"))?;
             guard.list_profiles()
         };
-        if !profiles.is_empty() {
+        if profiles.is_empty() {
+            return Ok(());
+        }
+        if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
             let rendered = profiles
-                .into_iter()
-                .map(|p| ui::stdout_profile(&p))
+                .iter()
+                .map(|p| ui::stdout_profile(p))
                 .collect::<Vec<_>>()
                 .join("  ");
             println!("{rendered}");
+            return Ok(());
         }
-        return Ok(());
+        let index = match Select::new()
+            .with_prompt("select a profile")
+            .items(&profiles)
+            .default(0)
+            .interact_opt()
+        {
+            Ok(Some(index)) => index,
+            Ok(None) => return Ok(()),
+            Err(dialoguer::Error::IO(err)) if err.kind() == io::ErrorKind::Interrupted => {
+                return Ok(());
+            }
+            Err(err) => return Err(err.into()),
+        };
+        return enter_profile_repl(&runtime, &session, &config, &profiles[index]);
     }
 
     if dispatch::is_command_token(&args[0]) {
@@ -93,33 +110,23 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    if args.len() == 1 {
-        let profile_name = args[0].clone();
-        let profile = config.profile(&profile_name)?.clone();
-        let s3 = runtime.block_on(S3Backend::connect(&profile))?;
-        let cdn = CdnBackend::from_profile(&profile)?;
-        {
-            let mut guard = session
-                .lock()
-                .map_err(|_| anyhow::anyhow!("session lock poisoned"))?;
-            guard.attach_profile(profile_name, profile.bucket.clone(), s3, cdn);
-        }
-        run_repl(runtime, session)
-    } else {
-        bail!("non-interactive mode uses command-first syntax, for example `bucketctl ls mybucket`")
-    }
+    bail!("non-interactive mode uses command-first syntax, for example `bucketctl ls mybucket`")
 }
 
-fn handle_config_subcommand(
-    args: &[String],
-    override_path: Option<&std::path::Path>,
+fn enter_profile_repl(
+    runtime: &Arc<Runtime>,
+    session: &Arc<Mutex<Session>>,
+    config: &AppConfig,
+    profile_name: &str,
 ) -> Result<()> {
-    match args.first().map(String::as_str) {
-        Some("init") => {
-            let force = args.iter().any(|arg| arg == "--force");
-            config::init_config(override_path, force)
-        }
-        Some(other) => bail!("unknown config subcommand `{other}`; try `bucketctl config init`"),
-        None => bail!("usage: bucketctl config init [--force]"),
+    let profile = config.profile(profile_name)?.clone();
+    let s3 = runtime.block_on(S3Backend::connect(&profile))?;
+    let cdn = CdnBackend::from_profile(&profile)?;
+    {
+        let mut guard = session
+            .lock()
+            .map_err(|_| anyhow::anyhow!("session lock poisoned"))?;
+        guard.attach_profile(profile_name.to_owned(), profile.bucket.clone(), s3, cdn);
     }
+    run_repl(runtime.clone(), session.clone())
 }

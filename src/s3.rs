@@ -624,14 +624,34 @@ impl S3Backend {
                 continue;
             }
             let delete = Delete::builder().set_objects(Some(objects)).build()?;
-            self.client
+            let result = self
+                .client
                 .delete_objects()
                 .bucket(bucket)
                 .delete(delete)
                 .send()
-                .await
-                .map_err(|err| self.map_err(err, bucket, None))?;
-            deleted += chunk.len();
+                .await;
+            match result {
+                Ok(output) => {
+                    if let Some(first) = output.errors().first() {
+                        return Err(anyhow!(
+                            "failed to delete `{}`: {}",
+                            first.key().unwrap_or("(unknown)"),
+                            first.message().unwrap_or("(no message)")
+                        ));
+                    }
+                    deleted += chunk.len();
+                }
+                Err(_) => {
+                    // Some S3-compatible endpoints reject DeleteObjects; fall back
+                    // to deleting objects one by one.
+                    eprintln!("warning: batch delete failed, falling back to per-object delete");
+                    for key in chunk {
+                        self.delete_object(bucket, key).await?;
+                        deleted += 1;
+                    }
+                }
+            }
         }
         Ok(deleted)
     }
@@ -666,7 +686,7 @@ where
                 301 => anyhow!(
                     "region or endpoint mismatch for bucket `{bucket}`—check config endpoint/region"
                 ),
-                _ => anyhow!("{err}"),
+                _ => anyhow!("service error (HTTP {status}): {:?}", service_err.err()),
             }
         }
         SdkError::DispatchFailure(_) => anyhow!("failed to connect to {endpoint}"),
@@ -1041,6 +1061,33 @@ mod tests {
         assert_eq!(
             mapped.to_string(),
             "failed to connect to https://s3.example.com"
+        );
+    }
+
+    #[test]
+    fn map_s3_err_service_error_includes_status_and_detail() {
+        use aws_smithy_runtime_api::http::StatusCode;
+
+        #[derive(Debug)]
+        struct FakeServiceError;
+        impl std::fmt::Display for FakeServiceError {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "fake failure")
+            }
+        }
+        impl std::error::Error for FakeServiceError {}
+
+        let raw = HttpResponse::new(
+            StatusCode::try_from(501).expect("valid status"),
+            SdkBody::empty(),
+        );
+        let err = SdkError::service_error(FakeServiceError, raw);
+        let mapped = map_s3_err(err, "my-bucket", None, "https://s3.example.com");
+        let message = mapped.to_string();
+        assert!(message.contains("501"), "unexpected message: {message}");
+        assert!(
+            message.contains("FakeServiceError"),
+            "unexpected message: {message}"
         );
     }
 
