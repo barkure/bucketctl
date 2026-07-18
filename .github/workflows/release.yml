@@ -25,7 +25,7 @@ jobs:
             archive_suffix: linux-arm64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust target
         run: rustup target add ${{ matrix.target }}
@@ -50,7 +50,7 @@ jobs:
           tar -C dist -czf ${BIN_NAME}-${TAG}-${{ matrix.archive_suffix }}.tar.gz ${BIN_NAME}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ env.BIN_NAME }}-${{ matrix.archive_suffix }}
           path: ${{ env.BIN_NAME }}-${{ github.ref_name }}-${{ matrix.archive_suffix }}.tar.gz
@@ -60,7 +60,7 @@ jobs:
     runs-on: macos-14
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust target
         run: rustup target add aarch64-apple-darwin
@@ -77,7 +77,7 @@ jobs:
           tar -C dist -czf ${BIN_NAME}-${TAG}-darwin-arm64.tar.gz ${BIN_NAME}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ env.BIN_NAME }}-darwin-arm64
           path: ${{ env.BIN_NAME }}-${{ github.ref_name }}-darwin-arm64.tar.gz
@@ -91,7 +91,7 @@ jobs:
 
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: dist
 
