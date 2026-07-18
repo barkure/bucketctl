@@ -1,3 +1,4 @@
+mod cdn;
 mod cli;
 mod command;
 mod commands;
@@ -14,6 +15,7 @@ mod ui;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, bail};
+use cdn::CdnBackend;
 use clap::{CommandFactory, Parser};
 use cli::Cli;
 use config::AppConfig;
@@ -79,11 +81,12 @@ fn main() -> Result<()> {
         if let Some(profile_name) = config.default_profile() {
             let profile = config.profile(profile_name)?.clone();
             let s3 = runtime.block_on(S3Backend::connect(&profile))?;
+            let cdn = CdnBackend::from_profile(&profile)?;
             {
                 let mut guard = session
                     .lock()
                     .map_err(|_| anyhow::anyhow!("session lock poisoned"))?;
-                guard.attach_profile(profile_name.to_owned(), profile.bucket.clone(), s3);
+                guard.attach_profile(profile_name.to_owned(), profile.bucket.clone(), s3, cdn);
             }
         }
         repl::run_noninteractive_command_line(&runtime, &session, &args)?;
@@ -94,11 +97,12 @@ fn main() -> Result<()> {
         let profile_name = args[0].clone();
         let profile = config.profile(&profile_name)?.clone();
         let s3 = runtime.block_on(S3Backend::connect(&profile))?;
+        let cdn = CdnBackend::from_profile(&profile)?;
         {
             let mut guard = session
                 .lock()
                 .map_err(|_| anyhow::anyhow!("session lock poisoned"))?;
-            guard.attach_profile(profile_name, profile.bucket.clone(), s3);
+            guard.attach_profile(profile_name, profile.bucket.clone(), s3, cdn);
         }
         run_repl(runtime, session)
     } else {

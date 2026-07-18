@@ -35,6 +35,8 @@ access_key = "env:ACCESS_KEY"
 secret_key = "env:SECRET_KEY"
 # secret_key = "YOUR_SECRET_KEY"
 path_style = false
+# optional: download objects via your CDN domain instead of the S3 endpoint
+# cdn_domain = "https://cdn.example.com"
 
 [cloudflare-r2]
 bucket = "assets"
@@ -46,6 +48,11 @@ path_style = true
 ```
 
 `default_profile` is optional. When set, most commands target that bucket by default.
+
+`cdn_domain` is optional. When set, `get` downloads objects with plain HTTPS from
+`{cdn_domain}/{key}` instead of the S3 endpoint — useful when a CDN accelerates your
+bucket. Objects must be publicly readable through the domain; listing and other
+operations still use the S3 API.
 
 ## Installation
 

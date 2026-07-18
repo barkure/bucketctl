@@ -30,6 +30,8 @@ pub struct ProfileConfig {
     pub secret_key: String,
     #[serde(default)]
     pub path_style: bool,
+    #[serde(default)]
+    pub cdn_domain: Option<String>,
 }
 
 impl AppConfig {
@@ -131,6 +133,8 @@ region = "auto"
 access_key = "env:ACCESS_KEY"
 secret_key = "env:SECRET_KEY"
 path_style = false
+# download objects through your CDN domain instead of the S3 endpoint
+# cdn_domain = "https://cdn.example.com"
 "#;
 
 fn resolve_secret(value: &str, field: &str) -> Result<String> {

@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Result, anyhow, bail};
 use tokio::runtime::Runtime;
 
-use crate::{config::ProfileConfig, s3::S3Backend};
+use crate::{cdn::CdnBackend, config::ProfileConfig, s3::S3Backend};
 
 #[derive(Clone)]
 pub struct Session {
@@ -16,6 +16,7 @@ pub struct Session {
     pub default_profile: Option<String>,
     pub profile_name: Option<String>,
     pub s3: Option<S3Backend>,
+    pub cdn: Option<CdnBackend>,
     pub bucket: Option<String>,
     pub cwd: String,
 }
@@ -27,6 +28,7 @@ impl Session {
             default_profile,
             profile_name: None,
             s3: None,
+            cdn: None,
             bucket: None,
             cwd: String::new(),
         }
@@ -59,10 +61,17 @@ impl Session {
             .ok_or_else(|| anyhow!("no profile attached"))
     }
 
-    pub fn attach_profile(&mut self, profile_name: String, bucket: String, s3: S3Backend) {
+    pub fn attach_profile(
+        &mut self,
+        profile_name: String,
+        bucket: String,
+        s3: S3Backend,
+        cdn: Option<CdnBackend>,
+    ) {
         self.profile_name = Some(profile_name);
         self.bucket = Some(bucket);
         self.s3 = Some(s3);
+        self.cdn = cdn;
         self.cwd.clear();
     }
 
@@ -230,8 +239,9 @@ pub fn attach_profile_for_command(
 ) -> Result<()> {
     let profile = with_session(session, |sess| sess.profile_config(profile_name).cloned())??;
     let s3 = runtime.block_on(S3Backend::connect(&profile))?;
+    let cdn = CdnBackend::from_profile(&profile)?;
     with_session_mut(session, |sess| {
-        sess.attach_profile(profile_name.to_owned(), profile.bucket.clone(), s3)
+        sess.attach_profile(profile_name.to_owned(), profile.bucket.clone(), s3, cdn)
     })?;
     Ok(())
 }

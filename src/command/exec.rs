@@ -291,9 +291,14 @@ fn execute_get(
         anyhow!("expected remote path like `<profile>:/path` or a cwd-relative path")
     })?;
     let (bucket, key, s3) = resolve_remote_operation(runtime, session, mode, remote)?;
+    let cdn = with_session(session, |sess| sess.cdn.clone())?;
     let local_arg = local.map(|path| path.to_string_lossy().into_owned());
     let local = Session::resolve_download_target(&remote_path, local_arg.as_deref())?;
-    finish_transfer(mode, runtime.block_on(s3.get_file(&bucket, &key, &local)))
+    let result = match cdn {
+        Some(cdn) => runtime.block_on(cdn.get_file(&key, &local)),
+        None => runtime.block_on(s3.get_file(&bucket, &key, &local)),
+    };
+    finish_transfer(mode, result)
 }
 
 fn execute_get_recursive_paths(
@@ -304,9 +309,17 @@ fn execute_get_recursive_paths(
     local: Option<&PathBuf>,
 ) -> Result<ExecOutcome> {
     let (bucket, remote_prefix, s3) = resolve_remote_operation(runtime, session, mode, remote)?;
+    let cdn = with_session(session, |sess| sess.cdn.clone())?;
     let layout = resolve_get_recursive_layout(&remote_prefix, local.map(PathBuf::as_path))?;
-    let (report, interrupted) =
-        execute_get_recursive(runtime, &s3, &bucket, &remote_prefix, &layout, mode)?;
+    let (report, interrupted) = execute_get_recursive(
+        runtime,
+        &s3,
+        cdn.as_ref(),
+        &bucket,
+        &remote_prefix,
+        &layout,
+        mode,
+    )?;
     finish_recursive(mode, report, interrupted)
 }
 

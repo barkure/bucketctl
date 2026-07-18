@@ -924,7 +924,7 @@ impl Drop for MultipartUploadGuard {
     }
 }
 
-fn download_part_path(local_path: &Path) -> PathBuf {
+pub(crate) fn download_part_path(local_path: &Path) -> PathBuf {
     let file_name = local_path
         .file_name()
         .map(|name| format!("{}.download", name.to_string_lossy()))
@@ -932,7 +932,7 @@ fn download_part_path(local_path: &Path) -> PathBuf {
     local_path.with_file_name(file_name)
 }
 
-async fn existing_part_size(part_path: &Path) -> Result<u64> {
+pub(crate) async fn existing_part_size(part_path: &Path) -> Result<u64> {
     match tokio::fs::metadata(part_path).await {
         Ok(metadata) => Ok(metadata.len()),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(0),
@@ -940,7 +940,7 @@ async fn existing_part_size(part_path: &Path) -> Result<u64> {
     }
 }
 
-async fn open_download_file(part_path: &Path, resume_from: u64) -> Result<File> {
+pub(crate) async fn open_download_file(part_path: &Path, resume_from: u64) -> Result<File> {
     let mut options = OpenOptions::new();
     options.create(true).write(true);
     if resume_from > 0 {

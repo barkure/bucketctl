@@ -11,7 +11,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use tokio::runtime::Runtime;
 use tokio::signal;
 
-use crate::{s3::S3Backend, session::Session};
+use crate::{cdn::CdnBackend, s3::S3Backend, session::Session};
 
 use super::types::ExecMode;
 
@@ -281,6 +281,7 @@ pub(crate) fn execute_put_recursive(
 pub(crate) fn execute_get_recursive(
     runtime: &Runtime,
     s3: &S3Backend,
+    cdn: Option<&CdnBackend>,
     bucket: &str,
     remote_prefix: &str,
     layout: &GetRecursiveLayout,
@@ -290,6 +291,7 @@ pub(crate) fn execute_get_recursive(
     let remote_prefix = remote_prefix.to_owned();
     let bucket = bucket.to_owned();
     let s3 = s3.clone();
+    let cdn = cdn.cloned();
 
     runtime.block_on(async move {
         let keys = s3.list_keys_recursive(&bucket, &remote_prefix).await?;
@@ -320,7 +322,11 @@ pub(crate) fn execute_get_recursive(
                     format!("failed to create local directory {}", parent.display())
                 })?;
             }
-            match s3.get_file(&bucket, &key, &local_path).await {
+            let result = match &cdn {
+                Some(cdn) => cdn.get_file(&key, &local_path).await,
+                None => s3.get_file(&bucket, &key, &local_path).await,
+            };
+            match result {
                 Ok(()) => report.ok += 1,
                 Err(err) if is_interrupted(&err) => {
                     cancelled.store(true, Ordering::SeqCst);

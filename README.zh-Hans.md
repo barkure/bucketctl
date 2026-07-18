@@ -35,6 +35,8 @@ access_key = "env:ACCESS_KEY"
 secret_key = "env:SECRET_KEY"
 # secret_key = "YOUR_SECRET_KEY"
 path_style = false
+# 可选：通过 CDN 域名下载对象，而不走 S3 endpoint
+# cdn_domain = "https://cdn.example.com"
 
 [cloudflare-r2]
 bucket = "assets"
@@ -46,6 +48,10 @@ path_style = true
 ```
 
 `default_profile` 是可选的。设置后，大部分命令默认操作该桶。
+
+`cdn_domain` 是可选的。设置后，`get` 会直接从 `{cdn_domain}/{key}` 通过 HTTPS
+下载对象，而不走 S3 endpoint——适合给桶套了 CDN 加速的场景。注意对象必须能通过
+该域名公开访问；列举等其他操作仍然走 S3 API。
 
 ## 安装
 
